@@ -27,7 +27,8 @@ engine and drawn on the GPU. If it is of use to you, it can be [supported](#supp
 
 ## What is in it
 
-- Candles, Heikin-Ashi, bars, line and area; linear, log and percent scales; up to four charts in a window, synced.
+- Candles, Heikin-Ashi, bars, line and area; linear, log and percent scales; up to four charts in a window, synced;
+  a dark and a light look; the time in UTC or in one of ten market cities.
 - 17 drawing tools (lines, rays, channel, rectangle, Fibonacci retracement, ranges, long and short positions,
   text notes) with styles, magnet, lock and undo.
 - 18 indicators: SMA, EMA, WMA, VWAP, Bollinger, Donchian, RSI, MACD, ATR, Stochastic, OBV, CCI, MFI, ADX,
