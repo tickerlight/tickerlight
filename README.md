@@ -136,14 +136,30 @@ one.
 Tickerlight is free and stays free. If it is useful to you, a donation helps keep it going. Send each coin only on
 the network named for it: coins sent on another network are lost.
 
-| Coin | Network | Address |
-| --- | --- | --- |
-| Bitcoin | Bitcoin | `bc1qvz6s39gntsja9zltmyvdllc5fmqaa9mfvwdyd6` |
-| Bitcoin | Lightning | `jauntytwig6793@cake.cash` |
-| ETH, USDT, USDC | Ethereum and EVM networks (Arbitrum, Base, Optimism, Polygon, BNB Chain) | `0xBEff04d313931F931B54d5A2e99beD131398E289` |
-| SOL, USDT, USDC | Solana | `Ev31Ekz4mxFptCPVrxfGSMKfzz6N4QiBN8z28G4ed7me` |
-| TRX, USDT | Tron (TRC-20) | `TAiL2Abj2PnmNLTwARtBwVLvbtdgZ1q2qQ` |
-| XMR | Monero | `45quWxug36w1poVggRcMGp26fgtaXL1d9fRXK3XuaFv1TeA5zMeABKRQUDk7BEpZkmfmNAjo2f7yzhqP8TCzcFA1PAA7tgZ` |
+Bitcoin, on the Bitcoin network:
+```
+bc1qvz6s39gntsja9zltmyvdllc5fmqaa9mfvwdyd6
+```
+Bitcoin, on Lightning:
+```
+jauntytwig6793@cake.cash
+```
+ETH, USDT, USDC, on Ethereum and EVM networks (Arbitrum, Base, Optimism, Polygon, BNB Chain):
+```
+0xBEff04d313931F931B54d5A2e99beD131398E289
+```
+SOL, USDT, USDC, on Solana:
+```
+Ev31Ekz4mxFptCPVrxfGSMKfzz6N4QiBN8z28G4ed7me
+```
+TRX, USDT, on Tron (TRC-20):
+```
+TAiL2Abj2PnmNLTwARtBwVLvbtdgZ1q2qQ
+```
+XMR, on Monero:
+```
+45quWxug36w1poVggRcMGp26fgtaXL1d9fRXK3XuaFv1TeA5zMeABKRQUDk7BEpZkmfmNAjo2f7yzhqP8TCzcFA1PAA7tgZ
+```
 
 ## Data and trading
 
