@@ -14,7 +14,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # The software Vulkan driver and its loader: the pixel tests draw offscreen with them.
-      - run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers libvulkan1
+      - run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers libvulkan1 vulkan-tools
+      - run: ls /usr/share/vulkan/icd.d && vulkaninfo --summary
       - run: rustup component add rustfmt clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
@@ -22,8 +23,6 @@ jobs:
       - run: cargo clippy -p tickerlight-web --target wasm32-unknown-unknown -- -D warnings
       - run: cargo clippy -p tickerlight-strategy --target wasm32-unknown-unknown --all-targets -- -D warnings
       - run: cargo test --workspace
-        env:
-          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
 
   other-systems:
     strategy:
