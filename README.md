@@ -117,6 +117,20 @@ trades by keys: `B`/`S` market buy/sell, `C` close, `L`/`T` limit/stop order at 
 `]`/`[` the order size. Live data is a `Source` (`poll` on every tick); see `tickerlight-binance` for a WebSocket
 one.
 
+## Support
+
+Tickerlight is free and stays free. If it is useful to you, a donation helps keep it going. Send each coin only on
+the network named for it: coins sent on another network are lost.
+
+| Coin | Network | Address |
+| --- | --- | --- |
+| Bitcoin | Bitcoin | `bc1qvz6s39gntsja9zltmyvdllc5fmqaa9mfvwdyd6` |
+| Bitcoin | Lightning | `jauntytwig6793@cake.cash` |
+| ETH, USDT, USDC | Ethereum and EVM networks (Arbitrum, Base, Optimism, Polygon, BNB Chain) | `0xBEff04d313931F931B54d5A2e99beD131398E289` |
+| SOL, USDT, USDC | Solana | `Ev31Ekz4mxFptCPVrxfGSMKfzz6N4QiBN8z28G4ed7me` |
+| TRX, USDT | Tron (TRC-20) | `TAiL2Abj2PnmNLTwARtBwVLvbtdgZ1q2qQ` |
+| XMR | Monero | `45quWxug36w1poVggRcMGp26fgtaXL1d9fRXK3XuaFv1TeA5zMeABKRQUDk7BEpZkmfmNAjo2f7yzhqP8TCzcFA1PAA7tgZ` |
+
 ## License
 
 MIT or Apache 2.0, at your option: [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE). Unless you
