@@ -2,11 +2,11 @@
 
 **Free, local charting, replay and strategy platform.** See every tick. Never the next one.
 
-![Manual backtest: a replay with the order ticket, a position and drawings](docs/images/manual-backtest.png)
+![A manual backtest: a long with take profit and stop loss, replayed bar by bar until the take profit fills](docs/images/replay.gif)
 
 Tickerlight is a desktop program for charts, bar replay and strategies. It is free and open source, and it runs
 on your machine: the market data and everything you do stay there. It is built in Rust on its own charting
-engine and drawn on the GPU.
+engine and drawn on the GPU. If it is of use to you, it can be [supported](#support).
 
 ## What sets it apart
 
@@ -46,13 +46,22 @@ Status: early.
 
 ## Run it
 
-Builds for Windows, macOS and Linux come with the first release. Until then, from source, with
-[Rust](https://rustup.rs) (the version in `rust-toolchain.toml` is installed by `rustup` on the first build):
+Download the archive for your system from [Releases](https://github.com/tickerlight/tickerlight/releases),
+unpack it and run `tickerlight` (`tickerlight.exe` on Windows). The builds are not signed yet:
+
+- Windows: on "Windows protected your PC", click "More info", then "Run anyway".
+- macOS: run `xattr -d com.apple.quarantine tickerlight` in the unpacked folder once, or after the first refusal
+  allow it in System Settings, Privacy & Security, "Open Anyway".
+
+A symbol can be given at the start (`tickerlight ETHUSDT --futures --months 3` opens the USD-M futures with three
+months of history); with none it opens where it was left, else BTCUSDT.
+
+From source, with [Rust](https://rustup.rs) (the version in `rust-toolchain.toml` is installed by `rustup` on
+the first build):
 
 ```sh
 git clone https://github.com/tickerlight/tickerlight && cd tickerlight
-cargo run --release -p tickerlight-app                                 # where it was left, else BTCUSDT
-cargo run --release -p tickerlight-app -- ETHUSDT --futures --months 3 # USDⓈ-M futures, three months of history
+cargo run --release -p tickerlight-app
 ```
 
 It draws with Vulkan, Metal, DirectX 12 or OpenGL. The first start downloads the history of the symbol (each
