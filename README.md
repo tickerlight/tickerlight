@@ -110,7 +110,7 @@ fingers pinch to zoom. Trading is done from the order panel; drag an order line 
 | `tickerlight-web` | An early browser build, not developed (kept building only). |
 
 ```sh
-# Headless, as PNGs: every step of using the program; the window in use; footprint and volume profile
+# Headless, as PNGs: a walk through the program; the window in use; the order flow
 TICKERLIGHT_DATA_DIR=... cargo run -p tickerlight-app --example tour -- out/
 TICKERLIGHT_DATA_DIR=... cargo run -p tickerlight-app --example panels -- out.png
 TICKERLIGHT_DATA_DIR=... cargo run -p tickerlight-app --example flow -- out.png
