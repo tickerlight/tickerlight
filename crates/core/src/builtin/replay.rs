@@ -151,7 +151,7 @@ impl Handler for ReplayHandler {
         let Some(state) = ctx.res.get_mut::<Replay>() else {
             return Response::IGNORED;
         };
-        let mut changed = false;
+        let (mut changed, mut left) = (false, false);
         match *event {
             Event::Command(name @ (commands::REPLAY_TOGGLE | commands::REPLAY_TOGGLE_AT_POINTER)) => {
                 if state.active {
@@ -160,6 +160,8 @@ impl Handler for ReplayHandler {
                     state.playing = false;
                     state.from = None;
                     state.blind = false;
+                    // Back to the present, as out of a replay in TradingView: the newest bars, not the replay's.
+                    left = true;
                 } else if ctx.len > 0 {
                     // The bar of the chart the replay starts on is complete; the finer bars after it are hidden.
                     let bar = if let Some(at) = state.start_at.take() {
@@ -230,11 +232,15 @@ impl Handler for ReplayHandler {
         if state.active && state.shown >= state.total && !ctx.cursor.forming() {
             state.playing = false; // the end of the data
         }
-        Response {
+        let response = Response {
             redraw: changed,
             animate: state.active && state.playing,
             ..Response::IGNORED
+        };
+        if left {
+            ctx.emit(commands::VIEW_END);
         }
+        response
     }
 }
 

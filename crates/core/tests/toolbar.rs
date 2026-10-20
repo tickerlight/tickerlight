@@ -114,10 +114,18 @@ fn clicking_the_replay_button_starts_and_stops_the_replay() {
     assert!(c.resources().get::<Replay>().unwrap().playing);
     assert!(c.needs_tick());
 
+    // Looking back at the start of the data, then leaving.
+    c.handle(Event::Command(commands::VIEW_START));
+    assert!(c.time_scale().right < 400.0);
     let at = button_center(&c, commands::REPLAY_TOGGLE).unwrap();
     click(&mut c, at);
     assert!(!c.resources().get::<Replay>().unwrap().active);
     assert_eq!(c.seen().len(), 500);
+    assert!(
+        c.time_scale().right >= 500.0,
+        "back at the newest bar: {}",
+        c.time_scale().right
+    );
     assert!(button_center(&c, commands::REPLAY_STEP).is_none(), "hidden again");
 }
 
