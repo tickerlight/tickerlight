@@ -1,0 +1,15 @@
+name: An idea
+description: Something missing for you to use it every day.
+labels: [idea]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What you want to do
+      description: The task, as you do it now (in TradingView or elsewhere), rather than the button you imagine.
+    validations:
+      required: true
+  - type: textarea
+    id: how
+    attributes:
+      label: How it could look
