@@ -1,0 +1,13 @@
+[package]
+name = "tickerlight-bitfinex"
+description = "Bitfinex spot market data (candles, trades, prices) as tickerlight-core data. A data source plugin: the core downloads nothing."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+tickerlight-core = { path = "../core" }
+serde_json = "1.0.151"
+tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
+ureq = "3.4.2"

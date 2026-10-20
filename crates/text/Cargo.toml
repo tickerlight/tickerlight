@@ -1,0 +1,16 @@
+[package]
+name = "tickerlight-text"
+description = "Text for the charting library: font, measuring, glyph atlas and layout. Shared by all backends."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+fontdue = "0.9.4"
+
+# Characters the built-in font lacks (Chinese, Japanese, Korean, symbols) come from the system's fonts.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ab_glyph = "0.2.32"
+fontdb = "0.24.0"
+ttf-parser = "0.25.1"

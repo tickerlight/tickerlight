@@ -1,0 +1,27 @@
+[package]
+name = "tickerlight-backend-wgpu"
+description = "wgpu backend: draws the core scene, in a desktop window or a browser canvas."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+tickerlight-core = { path = "../core" }
+tickerlight-text = { path = "../text" }
+web-time = "1.1.0"
+wgpu = "30.0.1"
+winit = "0.30.13"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+arboard = { version = "3.7.0", default-features = false, features = ["wayland-data-control"] }
+pollster = "1.0.1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4.79"
+web-sys = { version = "0.3.106", features = ["console", "CssStyleDeclaration", "HtmlCanvasElement", "HtmlElement"] }
+# WebGPU is in the default features; WebGL2 is the fallback for browsers without it.
+wgpu = { version = "30.0.1", features = ["webgl"] }
+
+[dev-dependencies]
+png = "0.18.1"

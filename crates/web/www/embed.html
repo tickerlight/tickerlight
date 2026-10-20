@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tickerlight in a page</title>
+  <style>
+    body { margin: 24px; font: 14px system-ui, sans-serif; background: #0b0e14; color: #d1d4dc; }
+    #chart { width: 720px; height: 420px; border-radius: 8px; overflow: hidden; }
+    canvas { display: block; width: 100%; height: 100%; }
+  </style>
+</head>
+<body>
+  <p>The chart is one canvas among other things on the page:</p>
+  <canvas id="chart" width="720" height="420"></canvas>
+  <script type="module">
+    import init, { Options, start_on } from "./pkg/tickerlight_web.js";
+    await init();
+    const MINUTE = 60_000;
+    let time = Math.floor(Date.now() / MINUTE) * MINUTE - 500 * MINUTE;
+    let price = 100;
+    const history = [];
+    for (let i = 0; i < 500; i++) {
+      const open = price, close = open + (Math.random() - 0.5) * 2;
+      price = close;
+      history.push(time, open, Math.max(open, close) + Math.random(), Math.min(open, close) - Math.random(), close, 1 + Math.random() * 10);
+      time += MINUTE;
+    }
+    start_on(document.getElementById("chart"), new Float64Array(history), new Options().sma(20).sma(50));
+  </script>
+</body>
+</html>

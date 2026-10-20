@@ -1,0 +1,29 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+
+# A debug build has to be usable: the chart redraws on every pointer move.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+# Its interpreter with debug assertions takes more than a thread's 2 MB of stack for a trap.
+[profile.dev.package.wasmi]
+debug-assertions = false
+
+# Size matters for the browser build (`crates/web/build.sh`), speed for the native one.
+[profile.web]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

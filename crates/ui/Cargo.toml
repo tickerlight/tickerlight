@@ -1,0 +1,10 @@
+[package]
+name = "tickerlight-ui"
+description = "Controls around a chart: an immediate-mode widget kit and a window of docked panels."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+tickerlight-core = { path = "../core" }

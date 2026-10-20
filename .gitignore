@@ -1,0 +1,6 @@
+/target
+# Working notes and a third-party clone kept only for reading.
+/CLAUDE.md
+/notes/
+crates/web/www/pkg/
+.unison*

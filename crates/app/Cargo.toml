@@ -1,0 +1,33 @@
+[package]
+name = "tickerlight-app"
+description = "Tickerlight, the desktop program: charts, replay, manual backtesting and strategies on market data kept locally."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "tickerlight"
+path = "src/main.rs"
+
+[dependencies]
+tickerlight-backend-wgpu = { path = "../backend-wgpu" }
+tickerlight-binance = { path = "../binance" }
+tickerlight-bitfinex = { path = "../bitfinex" }
+tickerlight-bitget = { path = "../bitget" }
+tickerlight-bitstamp = { path = "../bitstamp" }
+tickerlight-coinbase = { path = "../coinbase" }
+tickerlight-core = { path = "../core" }
+tickerlight-deribit = { path = "../deribit" }
+tickerlight-dukascopy = { path = "../dukascopy" }
+tickerlight-kraken = { path = "../kraken" }
+tickerlight-kucoin = { path = "../kucoin" }
+tickerlight-okx = { path = "../okx" }
+tickerlight-ui = { path = "../ui" }
+tickerlight-onnx = { path = "../onnx" }
+tickerlight-wasm = { path = "../wasm" }
+dirs = "7.0.0"
+png = "0.18.1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_UI_WindowsAndMessaging"] }

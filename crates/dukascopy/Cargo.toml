@@ -1,0 +1,13 @@
+[package]
+name = "tickerlight-dukascopy"
+description = "Dukascopy's free history (forex, metals, indices, stock and commodity CFDs) as tickerlight-core data. A data source plugin: the core downloads nothing."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+tickerlight-core = { path = "../core" }
+lzma-rs = "0.3.0"
+serde_json = "1.0.151"
+ureq = "3.4.2"

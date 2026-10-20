@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tickerlight</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #131722; overflow: hidden; }
+    canvas { display: block; width: 100%; height: 100%; }
+  </style>
+</head>
+<body>
+  <script type="module">
+    import init, { Options, start, start_demo } from "./pkg/tickerlight_web.js";
+    await init();
+
+    if (location.hash === "#demo") {
+      start_demo();
+    } else {
+      // History from JS: 2000 one-minute candles, then a live candle every 300 ms.
+      const MINUTE = 60_000;
+      let time = Math.floor(Date.now() / MINUTE) * MINUTE - 2000 * MINUTE;
+      let price = 100;
+      const history = [];
+      const next = () => {
+        const open = price;
+        const close = open + (Math.random() - 0.5) * 2;
+        const high = Math.max(open, close) + Math.random();
+        const low = Math.min(open, close) - Math.random();
+        price = close;
+        return [time, open, high, low, close, 1 + Math.random() * 10];
+      };
+      for (let i = 0; i < 2000; i++) { history.push(...next()); time += MINUTE; }
+      const chart = start(new Float64Array(history), new Options().sma(50).rsi(14));
+      setInterval(() => {
+        const c = next();
+        chart.push_candle(...c);
+        chart.push_trade(c[0], c[4], c[5], c[4] >= c[1]);
+        if (Math.random() < 0.2) time += MINUTE;  // a new candle now and then, otherwise update the forming one
+      }, 300);
+    }
+  </script>
+</body>
+</html>

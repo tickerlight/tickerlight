@@ -1,0 +1,14 @@
+[package]
+name = "tickerlight-strategy"
+description = "Write a strategy in Rust, build it to WebAssembly, and Tickerlight runs it with no rebuild of its own."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+
+# Built to WebAssembly: cargo build --release --target wasm32-unknown-unknown -p tickerlight-strategy --example breakout
+[[example]]
+name = "breakout"
+crate-type = ["cdylib"]
