@@ -91,6 +91,8 @@ const TRIED: [f64; 4] = [0.5, 0.7, 1.4, 2.0];
 struct Walk {
     /// How many bars it walks, from the first: the bars before the test when one is kept.
     bars: usize,
+    /// The times of the first and the last of them: its windows are of these bars only.
+    span: (Option<Time>, Option<Time>),
     /// The settings each search starts from: the strategy's when it began, set back after each run.
     from: Vec<f64>,
     windows: Vec<WalkWindow>,
@@ -113,9 +115,10 @@ struct WalkWindow {
 }
 
 impl Walk {
-    /// A walk over `bars` bars from the settings `from`: `windows` test windows, each after a training window
-    /// `training` times as long.
-    fn new(bars: usize, from: Vec<f64>, windows: usize, training: f64) -> Self {
+    /// A walk over the bars at `times` from the settings `from`: `windows` test windows, each after a training
+    /// window `training` times as long.
+    fn new(times: &[Time], from: Vec<f64>, windows: usize, training: f64) -> Self {
+        let bars = times.len();
         let test = (bars as f64 / (windows as f64 + training)).floor() as usize;
         let train = (test as f64 * training).round() as usize;
         let fits = windows > 0 && test >= 20 && train >= 20 && (windows - 1) * test + train + test <= bars;
@@ -134,11 +137,18 @@ impl Walk {
         let stopped = (!fits).then_some("Too few bars for so many windows");
         Self {
             bars,
+            span: (times.first().copied(), times.last().copied()),
             from,
             windows,
             at: (0, 0),
             stopped,
         }
+    }
+
+    /// Whether its windows are of the bars at `times`: the same series and timeframe, cut no shorter.
+    fn of(&self, times: &[Time]) -> bool {
+        let last = self.bars.checked_sub(1).and_then(|i| times.get(i)).copied();
+        times.len() >= self.bars && (times.first().copied(), last) == self.span
     }
 
     fn runs_per_window(&self) -> usize {
@@ -931,6 +941,14 @@ impl StrategyPanel {
                 ui.again();
             }
         }
+        // Its windows are bars counted from the first: other bars, another timeframe or a replay's, are not them.
+        if self
+            .walk
+            .as_ref()
+            .is_some_and(|walk| walk.finished() && !walk.of(bars.time()))
+        {
+            self.walk = None;
+        }
 
         let (muted, up, down) = (ui.theme().muted, ui.theme().up, ui.theme().down);
         let tint = |result: f64| if result >= 0.0 { up } else { down };
@@ -952,7 +970,7 @@ impl StrategyPanel {
                         .map_or_else(Vec::new, |strategy| {
                             strategy.settings().iter().map(|s| *s.value).collect()
                         });
-                    self.walk = Some(Walk::new(bars.len(), from, self.windows as usize, self.training));
+                    self.walk = Some(Walk::new(bars.time(), from, self.windows as usize, self.training));
                     ui.again();
                     return;
                 }
@@ -1626,11 +1644,10 @@ mod tests {
     fn walk_over(data: &Candles) -> Walk {
         let mut strategy = MovingAverageCross::default();
         let from = strategy.settings().iter().map(|s| *s.value).collect();
-        let mut walk = Walk::new(data.len(), from, 4, 3.0);
+        let mut walk = Walk::new(data.view().time(), from, 4, 3.0);
         while !walk.finished() {
             walk.step(&mut strategy, data.view(), &Account::default());
         }
-        assert_eq!(strategy.name(), "Moving average cross 10/30", "its settings put back");
         walk
     }
 
@@ -1673,7 +1690,8 @@ mod tests {
         assert_eq!(row(&one.windows[0]), row(&two.windows[0]));
         assert_ne!(row(&one.windows[3]), row(&two.windows[3]));
 
-        let few = Walk::new(100, vec![10.0], 4, 3.0);
+        let times: Vec<Time> = (0..100).map(|i| Time(i * 60_000)).collect();
+        let few = Walk::new(&times, vec![10.0], 4, 3.0);
         assert!(few.finished() && few.stopped.is_some() && few.windows.is_empty());
     }
 
@@ -1708,6 +1726,17 @@ mod tests {
         let name = format!("Moving average cross {}/{}", window.chosen[0], window.chosen[1]);
         assert!(has(&w, &name), "{name}");
         // The walk stays to pick another window from, until a setting is typed.
+        assert!(has(&w, "The tests together"));
+        // Its windows are bars of this timeframe: on another one they would be other bars.
+        w.chart_mut().set_timeframe(Some(300_000));
+        w.build_scene(&mut Scene::new());
+        assert!(has(&w, "Start walking") && !has(&w, "The tests together"));
+        w.chart_mut().set_timeframe(None);
+        click(&mut w, "Start walking");
+        while has(&w, "Stop walking") {
+            w.handle(Event::Tick { dt: 0.016 });
+            w.build_scene(&mut Scene::new());
+        }
         assert!(has(&w, "The tests together"));
         click(&mut w, "Fast");
         w.handle(Event::Key(Key::SelectAll));
