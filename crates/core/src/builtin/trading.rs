@@ -248,13 +248,16 @@ impl Account {
         self.orders.clear();
     }
 
-    /// Fills the orders that a bar reaches, oldest first, and returns how many were filled.
+    /// Fills the orders that a bar reaches, stops first, then oldest first, and returns how many were filled.
     /// Orders placed on this bar or later ones (`after >= time`) are not touched.
     pub fn match_bar(&mut self, time: Time, open: f64, high: f64, low: f64) -> usize {
-        // The exits wait for the bars after this one: which of the bar's prices came first is unknown.
-        let filled = self.match_orders(time, time, time, self.orders.len(), |order| {
-            order.fill_price(open, high, low)
+        // Which of the bar's prices came first is unknown, so the worse is taken: a position whose stop and target
+        // are both on the bar is stopped out. The exits wait for the bars after this one.
+        let reach = |order: &Order| order.fill_price(open, high, low);
+        let stops = self.match_orders(time, time, time, self.orders.len(), |order| {
+            reach(order).filter(|_| order.kind == OrderKind::Stop)
         });
+        let filled = stops + self.match_orders(time, time, time, self.orders.len(), reach);
         // So does a stop moved to the entry: the bar may have come back to it before it went to the trigger.
         self.reach_break_even(time, high, low);
         filled
@@ -1504,8 +1507,8 @@ mod tests {
         blind.match_bar(bar.0, bar.1, bar.2, bar.3);
         assert_eq!(
             last(&blind),
-            (110.0, 0.0, 0),
-            "without the tape the target, placed first, wins"
+            (95.0, 0.0, 0),
+            "without the tape the worse: the stop, though the target was placed first"
         );
 
         let mut down_first = long.clone();
