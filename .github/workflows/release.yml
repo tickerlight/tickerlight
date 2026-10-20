@@ -49,8 +49,10 @@ jobs:
           name: ${{ matrix.target }}
           path: tickerlight-*.*
 
+  # Made from the archives there are: a system whose runner never came is added later by running its job again.
   release:
     needs: build
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
