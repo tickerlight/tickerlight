@@ -79,13 +79,16 @@ The data folder holds the downloaded history, the sessions, the drawings and the
 
 `TICKERLIGHT_DATA_DIR` puts it elsewhere.
 
-In the program the panels do most things; the keys: `R` replay (at the pointer), `Space` play/pause, `→` step,
-`↑`/`↓` speed. Drawings: `H` horizontal line, `D` trend line, `Z` rectangle, `V` vertical line, `G` Fibonacci,
-`M` ruler, `Esc` cancel, `Delete` remove the selected, `Ctrl+Z`/`Ctrl+Shift+Z` undo/redo. `K` cycles the series
-kind, `O` the price scale (linear / log / percent), `F` the timeframe (a replay on 15 minutes still moves one
-minute at a time, the newest candle forms in front of you). Drag to pan, wheel to zoom; drag or wheel on a price
-axis to scale it by hand (`A` autoscales again); drag a pane separator to resize. Touch: one finger drags, two
-fingers pinch to zoom. Trading is done from the order panel; drag an order line to move it.
+In the program the panels do most things, and the tooltips say their keys. Over the chart, as on TradingView, a
+letter starts a symbol search with it, a digit types a timeframe (`15`, `30s`, `4h`, Enter), `/` adds an
+indicator and `Alt+G` goes to a date. Replay: `Alt+Shift+P` starts it at the pointer, `Space` plays and pauses,
+`Shift+→` steps, `↑`/`↓` or `+`/`-` change the speed. Drawings: `Alt+T` trend line, `Alt+H` horizontal line,
+`Alt+J` horizontal ray, `Alt+V` vertical line, `Alt+C` cross, `Alt+F` Fibonacci, `Alt+Shift+R` rectangle, `Esc`
+cancel, `Delete` remove the selected, `Ctrl+Z`/`Ctrl+Shift+Z` undo/redo. View: `←`/`→` a bar, `Ctrl+↑`/`Ctrl+↓`
+zoom, `Ctrl+←`/`Ctrl+→` the first/newest bar, `Alt+R` (or a double click on the time axis) reset, `Alt+L` log
+scale, `Alt+P` percent scale. Drag to pan, wheel to zoom; drag or wheel on a price axis to scale it by hand
+(double-click it to autoscale again); drag a pane separator to resize. Touch: one finger drags, two fingers pinch
+to zoom. Trading is done from the order panel; drag an order line to move it.
 
 ## Strategies and models
 
