@@ -14,6 +14,8 @@ mod window;
 #[cfg(not(target_arch = "wasm32"))]
 pub use headless::{Gpu, render_to_rgba};
 pub use renderer::Renderer;
-pub use window::run;
 #[cfg(target_arch = "wasm32")]
 pub use window::run_on_canvas;
+#[cfg(not(target_arch = "wasm32"))]
+pub use window::run_placed;
+pub use window::{Place, run};

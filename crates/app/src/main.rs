@@ -14,7 +14,7 @@ use std::path::PathBuf;
 
 use tickerlight_app::program::{self, Source, Window};
 use tickerlight_app::store::{Series, Venue};
-use tickerlight_backend_wgpu::{Gpu, render_to_rgba};
+use tickerlight_backend_wgpu::{Gpu, Place, render_to_rgba};
 use tickerlight_binance::{Interval, Market};
 use tickerlight_core::{Scene, Surface};
 
@@ -25,6 +25,8 @@ const OLD_DATA_FOLDER: &str = "charts";
 /// Overrides where the data are kept.
 const DATA_ENV: &str = "TICKERLIGHT_DATA_DIR";
 const SNAPSHOT_SIZE: (u32, u32) = (1400, 800);
+/// Where the window was when it closed, in the data folder.
+const PLACE_FILE: &str = "window.txt";
 
 struct Options {
     /// The series asked for on the command line.
@@ -150,13 +152,58 @@ fn run() -> Result<(), Box<dyn Error>> {
             snapshot(Window::new(source, series, Some(candles)), path)
         }
         None => {
+            let place_file = source.root.join(PLACE_FILE);
+            let place = std::fs::read_to_string(&place_file)
+                .ok()
+                .and_then(|text| parse_place(&text));
             let mut window = Window::resumed(source, options.series);
             if let Some(dir) = dirs::download_dir() {
                 window.set_exports(dir);
             }
-            tickerlight_backend_wgpu::run(window)
+            if let Some(place) = tickerlight_backend_wgpu::run_placed(window, place)? {
+                // Losing it only opens the window at another place next time.
+                let _ = std::fs::write(place_file, format_place(place));
+            }
+            Ok(())
         }
     }
+}
+
+/// A [`Place`] as lines of a name and numbers: `position 10 20`, `size 1600 900`, `maximized yes`.
+fn format_place(place: Place) -> String {
+    let mut text = String::new();
+    if let Some((x, y)) = place.position {
+        text += &format!("position {x} {y}\n");
+    }
+    let (width, height) = place.size;
+    text += &format!("size {width} {height}\n");
+    text += if place.maximized {
+        "maximized yes\n"
+    } else {
+        "maximized no\n"
+    };
+    text
+}
+
+/// What [`format_place`] wrote; `None` without a size (a damaged file: the window opens maximized).
+fn parse_place(text: &str) -> Option<Place> {
+    let (mut position, mut size, mut maximized) = (None, None, false);
+    for line in text.lines() {
+        let mut words = line.split_whitespace();
+        let name = words.next();
+        let numbers: Vec<i64> = words.clone().filter_map(|w| w.parse().ok()).collect();
+        match (name, numbers.as_slice()) {
+            (Some("position"), &[x, y]) => position = Some((i32::try_from(x).ok()?, i32::try_from(y).ok()?)),
+            (Some("size"), &[w, h]) if w > 0 && h > 0 => size = Some((u32::try_from(w).ok()?, u32::try_from(h).ok()?)),
+            (Some("maximized"), _) => maximized = words.next() == Some("yes"),
+            _ => {}
+        }
+    }
+    Some(Place {
+        position,
+        size: size?,
+        maximized,
+    })
 }
 
 /// Renders the window offscreen into a PNG instead of opening it.
@@ -171,4 +218,30 @@ fn snapshot(mut window: Window, path: &PathBuf) -> Result<(), Box<dyn Error>> {
     encoder.set_depth(png::BitDepth::Eight);
     encoder.write_header()?.write_image_data(&rgba)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_window_place_is_read_back_as_written_and_a_damaged_file_gives_none() {
+        for place in [
+            Place {
+                position: Some((-8, 1080)),
+                size: (1600, 900),
+                maximized: true,
+            },
+            Place {
+                position: None,
+                size: (800, 600),
+                maximized: false,
+            },
+        ] {
+            assert_eq!(parse_place(&format_place(place)), Some(place));
+        }
+        assert_eq!(parse_place(""), None);
+        assert_eq!(parse_place("size 0 900\n"), None);
+        assert_eq!(parse_place("position 1 2\nsize 1600\n"), None);
+    }
 }

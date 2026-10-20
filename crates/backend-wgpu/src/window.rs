@@ -27,7 +27,24 @@ const DOUBLE_CLICK_PIXELS: f32 = 4.0;
 /// scene is drawn by [`Renderer`]. All logic lives in `tickerlight-core`, where it is tested
 /// without a window.
 pub fn run(surface: impl Surface + 'static) -> Result<(), Box<dyn Error>> {
-    run_app(Box::new(surface), None)
+    run_app(Box::new(surface), None, None).map(drop)
+}
+
+/// Where a desktop window is and how large, in the screen's pixels, to open it there again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Place {
+    /// The top left corner of the frame; `None` where the system does not tell it (Wayland).
+    pub position: Option<(i32, i32)>,
+    /// The size inside the frame, when not maximized.
+    pub size: (u32, u32),
+    pub maximized: bool,
+}
+
+/// Like [`run`], with the window opened at `place` (maximized when there is none, as on a first start); returns
+/// where it was when it closed.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn run_placed(surface: impl Surface + 'static, place: Option<Place>) -> Result<Option<Place>, Box<dyn Error>> {
+    run_app(Box::new(surface), None, Some(place))
 }
 
 /// Like [`run`], in a browser, but draws into a canvas that the page already has instead of adding
@@ -37,7 +54,7 @@ pub fn run_on_canvas(
     surface: impl Surface + 'static,
     canvas: web_sys::HtmlCanvasElement,
 ) -> Result<(), Box<dyn Error>> {
-    run_app(Box::new(surface), Some(canvas))
+    run_app(Box::new(surface), Some(canvas), None).map(drop)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -45,7 +62,13 @@ type Canvas = Option<web_sys::HtmlCanvasElement>;
 #[cfg(not(target_arch = "wasm32"))]
 type Canvas = Option<std::convert::Infallible>;
 
-fn run_app(surface: Box<dyn Surface>, canvas: Canvas) -> Result<(), Box<dyn Error>> {
+/// `place`: `None` for a window of the default size, `Some` to open it where a [`Place`] says (`Some(None)`:
+/// maximized) and to follow where it goes.
+fn run_app(
+    surface: Box<dyn Surface>,
+    canvas: Canvas,
+    place: Option<Option<Place>>,
+) -> Result<Option<Place>, Box<dyn Error>> {
     let event_loop = EventLoop::<Ready>::with_user_event().build()?;
     #[allow(unused_mut)]
     let mut app = App {
@@ -70,20 +93,22 @@ fn run_app(surface: Box<dyn Surface>, canvas: Canvas) -> Result<(), Box<dyn Erro
         error: None,
         canvas,
         frames: FrameLog::from_env(),
+        placed: place.is_some(),
+        place: place.flatten(),
     };
     #[cfg(not(target_arch = "wasm32"))]
     {
         event_loop.run_app(&mut app)?;
         match app.error {
             Some(e) => Err(e),
-            None => Ok(()),
+            None => Ok(app.place),
         }
     }
     #[cfg(target_arch = "wasm32")]
     {
         use winit::platform::web::EventLoopExtWebSys;
         event_loop.spawn_app(app);
-        Ok(())
+        Ok(None)
     }
 }
 
@@ -176,6 +201,10 @@ struct App {
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     canvas: Canvas,
     frames: Option<FrameLog>,
+    /// The window opens where `place` says and follows where it goes.
+    placed: bool,
+    /// Where the window is: on opening, where it was last time.
+    place: Option<Place>,
 }
 
 struct Gfx {
@@ -316,6 +345,9 @@ impl App {
                 let size = gfx.window.inner_size();
                 self.surface.set_scale(gfx.window.scale_factor() as f32);
                 self.surface.resize(size.width as f32, size.height as f32);
+                if self.placed {
+                    follow(&mut self.place, &gfx.window);
+                }
                 gfx.window.request_redraw();
                 self.gfx = Some(gfx);
             }
@@ -330,6 +362,35 @@ impl App {
     }
 }
 
+/// Notes where `window` is now, for the next start: its size and corner only while it is neither maximized nor
+/// minimized, so that it comes back to them when no longer maximized.
+#[cfg(not(target_arch = "wasm32"))]
+fn follow(place: &mut Option<Place>, window: &Window) {
+    let maximized = window.is_maximized();
+    let place = place.get_or_insert_with(|| {
+        let size = winit::dpi::LogicalSize::new(1200.0, 700.0).to_physical(window.scale_factor());
+        Place {
+            position: None,
+            size: (size.width, size.height),
+            maximized,
+        }
+    });
+    if window.is_minimized() == Some(true) {
+        return;
+    }
+    place.maximized = maximized;
+    let size = window.inner_size();
+    if !maximized && size.width > 0 && size.height > 0 {
+        place.size = (size.width, size.height);
+        if let Ok(at) = window.outer_position() {
+            place.position = Some((at.x, at.y));
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn follow(_: &mut Option<Place>, _: &Window) {}
+
 impl ApplicationHandler<Ready> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.gfx.is_some() || self.pending.borrow().is_some() {
@@ -339,7 +400,29 @@ impl ApplicationHandler<Ready> for App {
         let mut attributes = Window::default_attributes().with_title("Tickerlight");
         #[cfg(not(target_arch = "wasm32"))]
         {
-            attributes = attributes.with_inner_size(winit::dpi::LogicalSize::new(1200.0, 700.0));
+            use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
+            attributes = match (self.placed, self.place) {
+                (true, Some(place)) => {
+                    let (width, height) = place.size;
+                    let mut placed = attributes
+                        .with_inner_size(PhysicalSize::new(width, height))
+                        .with_maximized(place.maximized);
+                    // Not where a screen no longer is.
+                    if let Some((x, y)) = place.position
+                        && event_loop.available_monitors().any(|m| {
+                            let (at, size) = (m.position(), m.size());
+                            let inside = |v: i32, from: i32, len: u32| v >= from && v < from + len as i32;
+                            inside(x + 40, at.x, size.width) && inside(y + 40, at.y, size.height)
+                        })
+                    {
+                        placed = placed.with_position(PhysicalPosition::new(x, y));
+                    }
+                    placed
+                }
+                (placed, _) => attributes
+                    .with_inner_size(LogicalSize::new(1200.0, 700.0))
+                    .with_maximized(placed),
+            };
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -410,6 +493,14 @@ impl ApplicationHandler<Ready> for App {
             && !matches!(event, WindowEvent::RedrawRequested)
         {
             gfx.window.request_redraw();
+        }
+        if self.placed
+            && matches!(
+                event,
+                WindowEvent::Resized(_) | WindowEvent::Moved(_) | WindowEvent::CloseRequested
+            )
+        {
+            follow(&mut self.place, &gfx.window);
         }
         let chart_event = match event {
             WindowEvent::CloseRequested => {
