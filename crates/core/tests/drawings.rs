@@ -534,31 +534,27 @@ fn a_note_is_typed_where_it_is_placed_in_any_script() {
     click(&mut c, 300.0, 120.0);
     assert_eq!(drawings(&c).editing, Some(0));
     // B and S are shortcuts of orders; here they are letters.
-    typed(&mut c, "Bs 100% Привет");
+    typed(&mut c, "Bs 100% Grüße");
     key(&mut c, Key::Backspace);
     assert_eq!(drawings(&c).tool, None);
     key(&mut c, Key::Enter);
     let d = drawings(&c);
     assert_eq!((d.items.len(), d.editing), (1, None));
-    assert_eq!(d.items[0].text, "Bs 100% Приве");
+    assert_eq!(d.items[0].text, "Bs 100% Grüß");
     let scene = frame(&mut c);
-    let shown = scene
-        .texts
-        .iter()
-        .find(|t| t.text == "Bs 100% Приве")
-        .expect("the note");
+    let shown = scene.texts.iter().find(|t| t.text == "Bs 100% Grüß").expect("the note");
     assert!((shown.x - 300.0).abs() < 1.0 && (shown.y - 120.0).abs() < 1.0);
 
     // Kept as text and read back.
     let saved = drawings(&c).save();
     let mut read = tickerlight_core::builtin::Drawings::default();
     assert_eq!(read.load(&saved, &["main"]), 1);
-    assert_eq!(read.items[0].text, "Bs 100% Приве");
+    assert_eq!(read.items[0].text, "Bs 100% Grüß");
 
     // Its size: drawn so, kept so.
     c.resources_mut().get_mut::<Drawings>().unwrap().items[0].size = 24.0;
     let scene = frame(&mut c);
-    let shown = scene.texts.iter().find(|t| t.text == "Bs 100% Приве").unwrap();
+    let shown = scene.texts.iter().find(|t| t.text == "Bs 100% Grüß").unwrap();
     assert_eq!(shown.size, 24.0);
     read.load(&drawings(&c).save(), &["main"]);
     assert_eq!(read.items[0].size, 24.0);
@@ -568,14 +564,14 @@ fn a_note_is_typed_where_it_is_placed_in_any_script() {
     assert_eq!(drawings(&c).selected, Some(0));
     key(&mut c, Key::Enter);
     assert_eq!(drawings(&c).editing, Some(0));
-    for _ in 0.."Bs 100% Приве".chars().count() {
+    for _ in 0.."Bs 100% Grüß".chars().count() {
         key(&mut c, Key::Backspace);
     }
     key(&mut c, Key::Escape);
     assert!(drawings(&c).items.is_empty());
     // Typed and taken back as one step: the note comes back whole.
     key(&mut c, Key::Undo);
-    assert_eq!(drawings(&c).items[0].text, "Bs 100% Приве");
+    assert_eq!(drawings(&c).items[0].text, "Bs 100% Grüß");
     // A double click on it writes it again too.
     click(&mut c, 310.0, 120.0);
     c.handle(Event::DoubleClick);

@@ -356,7 +356,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // A note on the chart, typed where it was placed.
     tour.click("Text");
     tour.click_at(tour.chart_point(0.08, 0.15));
-    tour.type_text("Breakout? Ждём ретест");
+    tour.type_text("Breakout? Wait for a retest");
     tour.shot("note-typing")?;
     tour.key(Key::Enter);
     // Picked again and made bigger.
