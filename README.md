@@ -110,14 +110,18 @@ fingers pinch to zoom. Trading is done from the order panel; drag an order line 
 | `tickerlight-web` | An early browser build, not developed (kept building only). |
 
 ```sh
-TICKERLIGHT_DATA_DIR=... cargo run -p tickerlight-app --example tour -- out/      # headless: every step of using the program, as PNGs
-TICKERLIGHT_DATA_DIR=... cargo run -p tickerlight-app --example panels -- out.png # headless: the window in use, as a PNG
-TICKERLIGHT_DATA_DIR=... cargo run -p tickerlight-app --example flow -- out.png   # headless: footprint and volume profile
-cargo run --release -p tickerlight-backend-wgpu --example window                  # random data, in a window
-cargo run -p tickerlight-backend-wgpu --example snapshot -- out/                  # headless: PNGs of scripted sessions
-cargo run --release -p tickerlight-core --example bench                           # frame times on 1M candles
+# Headless, as PNGs: every step of using the program; the window in use; footprint and volume profile
+TICKERLIGHT_DATA_DIR=... cargo run -p tickerlight-app --example tour -- out/
+TICKERLIGHT_DATA_DIR=... cargo run -p tickerlight-app --example panels -- out.png
+TICKERLIGHT_DATA_DIR=... cargo run -p tickerlight-app --example flow -- out.png
+# Random data in a window; PNGs of scripted sessions; frame times on 1M candles
+cargo run --release -p tickerlight-backend-wgpu --example window
+cargo run -p tickerlight-backend-wgpu --example snapshot -- out/
+cargo run --release -p tickerlight-core --example bench
 cargo test --workspace
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) before sending a change.
 
 A plugin adds layers (draw), handlers (react to input), resources (shared state), commands, keys and buttons.
 See [`crates/core/examples/plugin.rs`](crates/core/examples/plugin.rs): a complete one in 80 lines. Layers go to a
@@ -140,6 +144,14 @@ the network named for it: coins sent on another network are lost.
 | SOL, USDT, USDC | Solana | `Ev31Ekz4mxFptCPVrxfGSMKfzz6N4QiBN8z28G4ed7me` |
 | TRX, USDT | Tron (TRC-20) | `TAiL2Abj2PnmNLTwARtBwVLvbtdgZ1q2qQ` |
 | XMR | Monero | `45quWxug36w1poVggRcMGp26fgtaXL1d9fRXK3XuaFv1TeA5zMeABKRQUDk7BEpZkmfmNAjo2f7yzhqP8TCzcFA1PAA7tgZ` |
+
+## Data and trading
+
+Tickerlight is not affiliated with or endorsed by any exchange or data provider. It downloads market data from
+their public archives and APIs straight to your machine, for your own use, under each provider's terms (Binance's
+historical archive, for one, is licensed by Binance Vision under CC BY-NC-SA 4.0 for non-commercial use);
+nothing is redistributed with the program. Nothing in it is financial advice, and results on past data or on
+paper do not promise results with money.
 
 ## License
 
