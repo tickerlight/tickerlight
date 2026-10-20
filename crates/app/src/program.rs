@@ -156,7 +156,10 @@ fn recent(source: &Source, series: &Series, from: Time, now: Time) -> Result<Vec
                     Ok((0..today.len()).filter_map(|i| today.get(i)).collect())
                 }
                 Err(e) if e.to_string().contains("restricted location") => Err((
-                    format!("the {} API is closed to this location", series.venue.label()),
+                    format!(
+                        "the {} API is closed to this location; the other exchanges in the list may be open",
+                        series.venue.label()
+                    ),
                     false,
                 )),
                 Err(e) => {
