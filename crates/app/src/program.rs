@@ -3900,10 +3900,10 @@ mod tests {
             click(&mut window, "Step");
         }
         // Waits for the pictures asked for so far.
-        window.snapshots = Snapshots::default();
+        let failed = window.snapshots.wait();
         let session = window.workspace().ctx.sessions[0].clone();
         let dir = Sessions::new(&source.root).snapshots(session.created, "ETHUSDT");
-        let second = std::fs::read(dir.join("trade-2.png")).unwrap();
+        let second = std::fs::read(dir.join("trade-2.png")).unwrap_or_else(|e| panic!("{e}: {failed:?}"));
         assert_eq!(
             window.workspace().ctx.snapshots.as_ref(),
             Some(&dir),

@@ -33,14 +33,19 @@ impl Snapshots {
     pub fn failure(&self) -> Option<String> {
         self.worker.as_ref().and_then(|(_, _, failed)| failed.try_iter().last())
     }
+
+    /// Waits for the snapshots asked for so far. Returns why the last of them that failed did.
+    pub fn wait(&mut self) -> Option<String> {
+        let (jobs, thread, failed) = self.worker.take()?;
+        drop(jobs);
+        let _ = thread.join();
+        failed.try_iter().last()
+    }
 }
 
 impl Drop for Snapshots {
     fn drop(&mut self) {
-        if let Some((jobs, thread, _)) = self.worker.take() {
-            drop(jobs);
-            let _ = thread.join();
-        }
+        self.wait();
     }
 }
 
