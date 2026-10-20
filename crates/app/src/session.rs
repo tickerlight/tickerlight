@@ -562,6 +562,7 @@ impl Sessions {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Resume {
     pub layout: Layout,
+    /// Of the charts, then the one in a window of its own.
     pub active: usize,
     /// The clock times are shown on.
     pub zone: Zone,
@@ -569,6 +570,8 @@ pub struct Resume {
     pub look: Look,
     /// At least one.
     pub charts: Vec<Resumed>,
+    /// The chart in a window of its own.
+    pub apart: Option<Resumed>,
 }
 
 /// A chart where it was left: the series, its timeframe and the session going on.
@@ -608,12 +611,16 @@ impl Resume {
             self.zone.name(),
             self.look.name()
         );
-        for chart in &self.charts {
+        for (i, chart) in self.charts.iter().chain(&self.apart).enumerate() {
             let Series {
                 venue,
                 symbol,
                 interval,
             } = &chart.series;
+            // The chart in a window of its own comes last, after a line that says so.
+            if i == self.charts.len() {
+                text += "apart\n";
+            }
             text += &format!(
                 "series {} {symbol} {}\ntimeframe {}\nsession {}\n",
                 venue.name(),
@@ -625,8 +632,9 @@ impl Resume {
         text
     }
 
-    /// A `series` line begins each chart; one that cannot be read drops its chart. Without a `layout` it is one
-    /// chart, as before there were more; without a `zone`, UTC; without a `look`, dark.
+    /// A `series` line begins each chart; one that cannot be read drops its chart. One after an `apart` line is
+    /// the chart in a window of its own. Without a `layout` it is one chart, as before there were more; without a
+    /// `zone`, UTC; without a `look`, dark.
     fn from_text(text: &str) -> Option<Self> {
         let mut lines = text.lines();
         if lines.next()?.trim() != Self::HEADER {
@@ -636,6 +644,8 @@ impl Resume {
         let mut look = Look::Dark;
         // The chart the lines are about: `None` after a series that cannot be read.
         let mut current: Option<usize> = None;
+        // Where in `charts` the chart in a window of its own is, and whether the next series is it.
+        let (mut apart, mut next_apart) = (None, false);
         for line in lines {
             let (key, rest) = line.split_once(' ').unwrap_or((line, ""));
             match (key, rest.trim(), current) {
@@ -643,6 +653,7 @@ impl Resume {
                 ("active", i, _) => active = i.parse().unwrap_or(0),
                 ("zone", name, _) => zone = Zone::from_name(name).unwrap_or_default(),
                 ("look", name, _) => look = Look::from_name(name).unwrap_or_default(),
+                ("apart", _, _) => next_apart = true,
                 ("series", rest, _) => {
                     current = parse_series(rest).map(|series| {
                         charts.push(Resumed {
@@ -651,19 +662,24 @@ impl Resume {
                             session: None,
                         });
                         charts.len() - 1
-                    })
+                    });
+                    if std::mem::take(&mut next_apart) {
+                        apart = current;
+                    }
                 }
                 ("timeframe", t, Some(c)) => charts[c].timeframe = t.parse().ok().filter(|&t: &i64| t > 0),
                 ("session", t, Some(c)) => charts[c].session = t.parse().ok().map(Time),
                 _ => {}
             }
         }
+        let apart = apart.map(|i| charts.remove(i));
         (!charts.is_empty()).then(|| Self {
             layout,
-            active: active.min(charts.len() - 1),
+            active: active.min(charts.len() - usize::from(apart.is_none())),
             zone,
             look,
             charts,
+            apart,
         })
     }
 }
@@ -823,10 +839,23 @@ mod tests {
                     ..chart.clone()
                 },
             ],
+            apart: None,
         };
         resume.save(&root).unwrap();
         assert_eq!(Resume::load(&root), Some(resume.clone()));
         assert!(resume.to_text().contains("\nlook light\n"));
+        // A chart in a window of its own, active, comes back as it was.
+        let apart = Resume {
+            active: 2,
+            apart: Some(Resumed {
+                timeframe: Some(3_600_000),
+                session: None,
+                ..chart.clone()
+            }),
+            ..resume.clone()
+        };
+        apart.save(&root).unwrap();
+        assert_eq!(Resume::load(&root), Some(apart));
         // Written before there were several charts, a time zone or a look: one, active, in UTC, dark.
         let s = series();
         let old = format!(
@@ -842,6 +871,7 @@ mod tests {
             zone: Zone::Utc,
             look: Look::Dark,
             charts: vec![chart],
+            apart: None,
         };
         assert_eq!(Resume::load(&root), Some(one));
         fs::write(root.join("resume"), "chart-resume 1\ntimeframe 60000\n").unwrap();

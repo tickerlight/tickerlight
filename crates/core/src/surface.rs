@@ -34,6 +34,27 @@ pub trait Surface {
     fn pointer_shape(&self) -> PointerShape {
         PointerShape::Default
     }
+    /// A second window the surface shows a part of itself in (a chart on another screen), if it can.
+    fn apart_surface(&mut self) -> Option<&mut dyn Apart> {
+        None
+    }
+}
+
+/// The second window of a [`Surface`]: the backend opens it while [`Apart::apart_open`] says so and drives it as
+/// it drives the surface's own window, through these. Ticks go to the surface alone; it ticks what both show.
+pub trait Apart {
+    /// Whether the second window is wanted now.
+    fn apart_open(&self) -> bool;
+    /// The user closed the second window.
+    fn close_apart(&mut self);
+    /// Its size in device pixels.
+    fn apart_resize(&mut self, width: f32, height: f32);
+    fn apart_set_scale(&mut self, scale: f32);
+    /// An event in the second window; returns whether a redraw (of either window) is needed.
+    fn apart_handle(&mut self, event: Event) -> bool;
+    fn apart_scene(&mut self, scene: &mut Scene);
+    fn apart_title(&self) -> String;
+    fn apart_pointer_shape(&self) -> PointerShape;
 }
 
 impl Surface for Chart {

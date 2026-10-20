@@ -41,7 +41,7 @@ pub use plugin::{
 pub use price_scale::{PriceMode, PriceScale};
 pub use scene::{ClipRect, Color, Direction, LayerRange, Line, Rect, Scene, Text};
 pub use source::{Sink, Source};
-pub use surface::Surface;
+pub use surface::{Apart, Surface};
 pub use tickerlight_text::{Align, Font};
 pub use time::Time;
 pub use time_scale::TimeScale;

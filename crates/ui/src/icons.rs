@@ -41,6 +41,8 @@ pub enum Icon {
     LayoutColumns,
     LayoutRows,
     LayoutGrid,
+    /// A second window over a corner of the first: a chart in a window of its own.
+    NewWindow,
     /// Symbols in rows: the watchlist.
     List,
     /// Prices going up and down: trading.
@@ -275,6 +277,14 @@ pub fn draw(scene: &mut Scene, icon: Icon, area: Area, color: Color, up: Color, 
             if matches!(icon, Icon::LayoutRows | Icon::LayoutGrid) {
                 line(scene, 2.0, 9.0, 16.0, 9.0);
             }
+        }
+        Icon::NewWindow => {
+            poly(scene, &[(2.0, 6.0), (12.0, 6.0), (12.0, 15.0), (2.0, 15.0)], true);
+            poly(
+                scene,
+                &[(6.0, 6.0), (6.0, 3.0), (16.0, 3.0), (16.0, 12.0), (12.0, 12.0)],
+                false,
+            );
         }
         Icon::List => {
             for y in [4.5, 9.0, 13.5] {

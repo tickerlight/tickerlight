@@ -14,7 +14,7 @@ use std::path::PathBuf;
 
 use tickerlight_app::program::{self, Source, Window};
 use tickerlight_app::store::{Series, Venue};
-use tickerlight_backend_wgpu::{Gpu, Place, render_to_rgba};
+use tickerlight_backend_wgpu::{Gpu, Place, Places, render_to_rgba};
 use tickerlight_binance::{Interval, Market};
 use tickerlight_core::{Scene, Surface};
 
@@ -27,6 +27,8 @@ const DATA_ENV: &str = "TICKERLIGHT_DATA_DIR";
 const SNAPSHOT_SIZE: (u32, u32) = (1400, 800);
 /// Where the window was when it closed, in the data folder.
 const PLACE_FILE: &str = "window.txt";
+/// Where the window of a chart of its own was last.
+const APART_PLACE_FILE: &str = "apart-window.txt";
 
 struct Options {
     /// The series asked for on the command line.
@@ -152,17 +154,26 @@ fn run() -> Result<(), Box<dyn Error>> {
             snapshot(Window::new(source, series, Some(candles)), path)
         }
         None => {
-            let place_file = source.root.join(PLACE_FILE);
-            let place = std::fs::read_to_string(&place_file)
-                .ok()
-                .and_then(|text| parse_place(&text));
+            let read = |name| {
+                std::fs::read_to_string(source.root.join(name))
+                    .ok()
+                    .and_then(|text| parse_place(&text))
+            };
+            let places = Places {
+                main: read(PLACE_FILE),
+                apart: read(APART_PLACE_FILE),
+            };
+            let root = source.root.clone();
             let mut window = Window::resumed(source, options.series);
             if let Some(dir) = dirs::download_dir() {
                 window.set_exports(dir);
             }
-            if let Some(place) = tickerlight_backend_wgpu::run_placed(window, place)? {
-                // Losing it only opens the window at another place next time.
-                let _ = std::fs::write(place_file, format_place(place));
+            let places = tickerlight_backend_wgpu::run_placed(window, places)?;
+            // Losing them only opens the windows at other places next time.
+            for (name, place) in [(PLACE_FILE, places.main), (APART_PLACE_FILE, places.apart)] {
+                if let Some(place) = place {
+                    let _ = std::fs::write(root.join(name), format_place(place));
+                }
             }
             Ok(())
         }

@@ -27,7 +27,7 @@ const DOUBLE_CLICK_PIXELS: f32 = 4.0;
 /// scene is drawn by [`Renderer`]. All logic lives in `tickerlight-core`, where it is tested
 /// without a window.
 pub fn run(surface: impl Surface + 'static) -> Result<(), Box<dyn Error>> {
-    run_app(Box::new(surface), None, None).map(drop)
+    run_app(Box::new(surface), None, None, None).map(drop)
 }
 
 /// Where a desktop window is and how large, in the screen's pixels, to open it there again.
@@ -40,11 +40,20 @@ pub struct Place {
     pub maximized: bool,
 }
 
-/// Like [`run`], with the window opened at `place` (maximized when there is none, as on a first start); returns
-/// where it was when it closed.
+/// Where the program's windows are: its own, and the second one its surface may ask for
+/// ([`Surface::apart_surface`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Places {
+    pub main: Option<Place>,
+    pub apart: Option<Place>,
+}
+
+/// Like [`run`], with the window opened at `places.main` (maximized when there is none, as on a first start), and
+/// the second window, while the surface wants one, at `places.apart` (of the default size when there is none);
+/// returns where they were last.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn run_placed(surface: impl Surface + 'static, place: Option<Place>) -> Result<Option<Place>, Box<dyn Error>> {
-    run_app(Box::new(surface), None, Some(place))
+pub fn run_placed(surface: impl Surface + 'static, places: Places) -> Result<Places, Box<dyn Error>> {
+    run_app(Box::new(surface), None, Some(places.main), places.apart)
 }
 
 /// Like [`run`], in a browser, but draws into a canvas that the page already has instead of adding
@@ -54,7 +63,7 @@ pub fn run_on_canvas(
     surface: impl Surface + 'static,
     canvas: web_sys::HtmlCanvasElement,
 ) -> Result<(), Box<dyn Error>> {
-    run_app(Box::new(surface), Some(canvas), None).map(drop)
+    run_app(Box::new(surface), Some(canvas), None, None).map(drop)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -63,31 +72,25 @@ type Canvas = Option<web_sys::HtmlCanvasElement>;
 type Canvas = Option<std::convert::Infallible>;
 
 /// `place`: `None` for a window of the default size, `Some` to open it where a [`Place`] says (`Some(None)`:
-/// maximized) and to follow where it goes.
+/// maximized) and to follow where it goes. `apart`: where the second window opens.
 fn run_app(
     surface: Box<dyn Surface>,
     canvas: Canvas,
     place: Option<Option<Place>>,
-) -> Result<Option<Place>, Box<dyn Error>> {
+    apart: Option<Place>,
+) -> Result<Places, Box<dyn Error>> {
     let event_loop = EventLoop::<Ready>::with_user_event().build()?;
     #[allow(unused_mut)]
     let mut app = App {
         surface,
-        scene: Scene::new(),
-        cursor: (0.0, 0.0),
-        last_press: None,
-        double: false,
-        moved: None,
+        main: None,
+        apart: None,
         shortcut: false,
         command: false,
         alt: false,
         shift: false,
         clipboard: Clipboard::default(),
-        title: String::new(),
-        shape: PointerShape::Default,
-        touches: Touches::new(),
         last_tick: None,
-        gfx: None,
         pending: Rc::new(RefCell::new(None)),
         proxy: event_loop.create_proxy(),
         error: None,
@@ -95,20 +98,24 @@ fn run_app(
         frames: FrameLog::from_env(),
         placed: place.is_some(),
         place: place.flatten(),
+        apart_place: apart,
     };
     #[cfg(not(target_arch = "wasm32"))]
     {
         event_loop.run_app(&mut app)?;
         match app.error {
             Some(e) => Err(e),
-            None => Ok(app.place),
+            None => Ok(Places {
+                main: app.place,
+                apart: app.apart_place,
+            }),
         }
     }
     #[cfg(target_arch = "wasm32")]
     {
         use winit::platform::web::EventLoopExtWebSys;
         event_loop.spawn_app(app);
-        Ok(None)
+        Ok(Places::default())
     }
 }
 
@@ -166,16 +173,10 @@ impl FrameLog {
 
 struct App {
     surface: Box<dyn Surface>,
-    scene: Scene,
-    /// Where the pointer is, as the window last told.
-    cursor: (f32, f32),
-    /// When and where the left button last went down, to tell a double click.
-    last_press: Option<(Instant, (f32, f32))>,
-    /// The press that went down was the second of a double click: its release sends `Event::DoubleClick`.
-    double: bool,
-    /// The pointer's latest position not yet given to the surface: a mouse reports many moves a frame, and only
-    /// the last one shows.
-    moved: Option<(f32, f32)>,
+    /// The program's window, once its GPU is set up.
+    main: Option<View>,
+    /// The second window, while the surface wants one (see [`Surface::apart_surface`]).
+    apart: Option<View>,
     /// Ctrl, Alt or the system key held: letters are then not typed.
     shortcut: bool,
     /// Ctrl or the system key (Cmd) held: with A, C, X and V they edit text.
@@ -184,14 +185,8 @@ struct App {
     alt: bool,
     shift: bool,
     clipboard: Clipboard,
-    /// The window's title as last set.
-    title: String,
-    /// The pointer's shape as last set.
-    shape: PointerShape,
-    touches: Touches,
     /// When the last `Tick` was sent; `None` while nothing animates.
     last_tick: Option<Instant>,
-    gfx: Option<Gfx>,
     /// The GPU setup that finished in the background, waiting to be picked up.
     pending: Pending,
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
@@ -205,6 +200,59 @@ struct App {
     placed: bool,
     /// Where the window is: on opening, where it was last time.
     place: Option<Place>,
+    /// Where the second window is, or was when it closed.
+    apart_place: Option<Place>,
+}
+
+/// Which window: the program's own, or the second one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Which {
+    Main,
+    Apart,
+}
+
+/// Gives `event` to what the `which` window shows of `surface`. Returns whether a redraw is needed.
+fn send(surface: &mut dyn Surface, which: Which, event: Event) -> bool {
+    match which {
+        Which::Main => surface.handle(event),
+        Which::Apart => surface.apart_surface().is_some_and(|a| a.apart_handle(event)),
+    }
+}
+
+/// A window on the screen, and its input as it came.
+struct View {
+    gfx: Gfx,
+    scene: Scene,
+    /// Where the pointer is, as the window last told.
+    cursor: (f32, f32),
+    /// When and where the left button last went down, to tell a double click.
+    last_press: Option<(Instant, (f32, f32))>,
+    /// The press that went down was the second of a double click: its release sends `Event::DoubleClick`.
+    double: bool,
+    /// The pointer's latest position not yet given to the surface: a mouse reports many moves a frame, and only
+    /// the last one shows.
+    moved: Option<(f32, f32)>,
+    /// The window's title as last set.
+    title: String,
+    /// The pointer's shape as last set.
+    shape: PointerShape,
+    touches: Touches,
+}
+
+impl View {
+    fn new(gfx: Gfx) -> Self {
+        Self {
+            gfx,
+            scene: Scene::new(),
+            cursor: (0.0, 0.0),
+            last_press: None,
+            double: false,
+            moved: None,
+            title: String::new(),
+            shape: PointerShape::Default,
+            touches: Touches::new(),
+        }
+    }
 }
 
 struct Gfx {
@@ -349,7 +397,7 @@ impl App {
                     follow(&mut self.place, &gfx.window);
                 }
                 gfx.window.request_redraw();
-                self.gfx = Some(gfx);
+                self.main = Some(View::new(gfx));
             }
             Err(e) => {
                 // A page has nowhere to return the error to: put it where the developer looks.
@@ -359,6 +407,94 @@ impl App {
                 event_loop.exit();
             }
         }
+    }
+
+    /// Asks every window but `except` for a frame: what one shows follows what happens in the other.
+    fn redraw(&self, except: Option<Which>) {
+        for (which, view) in [(Which::Main, &self.main), (Which::Apart, &self.apart)] {
+            if let Some(view) = view
+                && Some(which) != except
+            {
+                view.gfx.window.request_redraw();
+            }
+        }
+    }
+
+    /// Opens the second window when the surface wants one, and closes it when no longer.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn place_apart(&mut self, event_loop: &ActiveEventLoop) {
+        let wanted = self.surface.apart_surface().is_some_and(|a| a.apart_open());
+        if !wanted {
+            if let Some(view) = self.apart.take() {
+                follow(&mut self.apart_place, &view.gfx.window);
+            }
+            return;
+        }
+        if self.apart.is_some() || self.main.is_none() {
+            return;
+        }
+        let attributes = placed(
+            Window::default_attributes().with_title("Tickerlight"),
+            event_loop,
+            self.apart_place,
+            false,
+        );
+        let gfx = event_loop
+            .create_window(attributes)
+            .map_err(Box::<dyn Error>::from)
+            .and_then(|window| pollster::block_on(Gfx::new(Arc::new(window), event_loop.owned_display_handle())));
+        match gfx {
+            Ok(gfx) => {
+                let size = gfx.window.inner_size();
+                if let Some(apart) = self.surface.apart_surface() {
+                    apart.apart_set_scale(gfx.window.scale_factor() as f32);
+                    apart.apart_resize(size.width as f32, size.height as f32);
+                }
+                follow(&mut self.apart_place, &gfx.window);
+                self.apart = Some(View::new(gfx));
+            }
+            Err(e) => {
+                // The program goes on in its own window.
+                eprintln!("could not open a second window: {e}");
+                if let Some(apart) = self.surface.apart_surface() {
+                    apart.close_apart();
+                }
+            }
+        }
+        self.redraw(None);
+    }
+}
+
+/// `attributes` for a window at `place` (not where a screen no longer is); without one, of the default size and
+/// maximized when `maximized`.
+#[cfg(not(target_arch = "wasm32"))]
+fn placed(
+    attributes: winit::window::WindowAttributes,
+    event_loop: &ActiveEventLoop,
+    place: Option<Place>,
+    maximized: bool,
+) -> winit::window::WindowAttributes {
+    use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
+    let Some(place) = place else {
+        return attributes
+            .with_inner_size(LogicalSize::new(1200.0, 700.0))
+            .with_maximized(maximized);
+    };
+    let (width, height) = place.size;
+    let placed = attributes
+        .with_inner_size(PhysicalSize::new(width, height))
+        .with_maximized(place.maximized);
+    match place.position {
+        Some((x, y))
+            if event_loop.available_monitors().any(|m| {
+                let (at, size) = (m.position(), m.size());
+                let inside = |v: i32, from: i32, len: u32| v >= from && v < from + len as i32;
+                inside(x + 40, at.x, size.width) && inside(y + 40, at.y, size.height)
+            }) =>
+        {
+            placed.with_position(PhysicalPosition::new(x, y))
+        }
+        _ => placed,
     }
 }
 
@@ -393,36 +529,14 @@ fn follow(_: &mut Option<Place>, _: &Window) {}
 
 impl ApplicationHandler<Ready> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.gfx.is_some() || self.pending.borrow().is_some() {
+        if self.main.is_some() || self.pending.borrow().is_some() {
             return;
         }
         #[allow(unused_mut)]
         let mut attributes = Window::default_attributes().with_title("Tickerlight");
         #[cfg(not(target_arch = "wasm32"))]
         {
-            use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
-            attributes = match (self.placed, self.place) {
-                (true, Some(place)) => {
-                    let (width, height) = place.size;
-                    let mut placed = attributes
-                        .with_inner_size(PhysicalSize::new(width, height))
-                        .with_maximized(place.maximized);
-                    // Not where a screen no longer is.
-                    if let Some((x, y)) = place.position
-                        && event_loop.available_monitors().any(|m| {
-                            let (at, size) = (m.position(), m.size());
-                            let inside = |v: i32, from: i32, len: u32| v >= from && v < from + len as i32;
-                            inside(x + 40, at.x, size.width) && inside(y + 40, at.y, size.height)
-                        })
-                    {
-                        placed = placed.with_position(PhysicalPosition::new(x, y));
-                    }
-                    placed
-                }
-                (placed, _) => attributes
-                    .with_inner_size(LogicalSize::new(1200.0, 700.0))
-                    .with_maximized(placed),
-            };
+            attributes = placed(attributes, event_loop, self.place, self.placed);
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -473,8 +587,17 @@ impl ApplicationHandler<Ready> for App {
         }
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
-        let Some(gfx) = self.gfx.as_mut() else { return };
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        let is = |view: &Option<View>| view.as_ref().is_some_and(|v| v.gfx.window.id() == id);
+        let (which, view) = if is(&self.main) {
+            (Which::Main, self.main.as_mut())
+        } else if is(&self.apart) {
+            (Which::Apart, self.apart.as_mut())
+        } else {
+            return;
+        };
+        let Some(view) = view else { return };
+        let surface = &mut *self.surface;
         if let Some(log) = &mut self.frames
             && matches!(
                 event,
@@ -487,58 +610,94 @@ impl ApplicationHandler<Ready> for App {
             log.input.get_or_insert_with(Instant::now);
         }
         // A pending move goes first, so the surface sees events in their order.
+        let mut redraw = false;
         if !matches!(event, WindowEvent::CursorMoved { .. })
-            && let Some((x, y)) = self.moved.take()
-            && self.surface.handle(Event::PointerMoved { x, y })
-            && !matches!(event, WindowEvent::RedrawRequested)
+            && let Some((x, y)) = view.moved.take()
         {
-            gfx.window.request_redraw();
+            redraw |= send(surface, which, Event::PointerMoved { x, y });
         }
-        if self.placed
-            && matches!(
-                event,
-                WindowEvent::Resized(_) | WindowEvent::Moved(_) | WindowEvent::CloseRequested
-            )
-        {
-            follow(&mut self.place, &gfx.window);
+        if matches!(
+            event,
+            WindowEvent::Resized(_) | WindowEvent::Moved(_) | WindowEvent::CloseRequested
+        ) {
+            match which {
+                Which::Main if self.placed => follow(&mut self.place, &view.gfx.window),
+                Which::Main => {}
+                Which::Apart => follow(&mut self.apart_place, &view.gfx.window),
+            }
         }
         let chart_event = match event {
-            WindowEvent::CloseRequested => {
+            WindowEvent::CloseRequested if which == Which::Main => {
+                // The second window comes back where it is now.
+                if let Some(apart) = &self.apart {
+                    follow(&mut self.apart_place, &apart.gfx.window);
+                }
                 event_loop.exit();
                 return;
             }
-            WindowEvent::Resized(size) => {
-                gfx.resize(size.width, size.height);
-                self.surface.resize(size.width as f32, size.height as f32);
-                gfx.window.request_redraw();
+            // Closing the second window closes it alone.
+            WindowEvent::CloseRequested => {
+                if let Some(apart) = surface.apart_surface() {
+                    apart.close_apart();
+                }
+                self.apart = None;
+                self.redraw(None);
                 return;
+            }
+            WindowEvent::Resized(size) => {
+                view.gfx.resize(size.width, size.height);
+                let (width, height) = (size.width as f32, size.height as f32);
+                match (which, surface.apart_surface()) {
+                    (Which::Main, _) => surface.resize(width, height),
+                    (Which::Apart, Some(apart)) => apart.apart_resize(width, height),
+                    (Which::Apart, None) => {}
+                }
+                redraw = true;
+                None
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 // The size arrives in a following `Resized`.
-                self.surface.set_scale(scale_factor as f32);
-                gfx.window.request_redraw();
-                return;
+                match (which, surface.apart_surface()) {
+                    (Which::Main, _) => surface.set_scale(scale_factor as f32),
+                    (Which::Apart, Some(apart)) => apart.apart_set_scale(scale_factor as f32),
+                    (Which::Apart, None) => {}
+                }
+                redraw = true;
+                None
             }
             WindowEvent::RedrawRequested => {
                 let started = Instant::now();
-                self.surface.build_scene(&mut self.scene);
-                gfx.draw(&self.scene);
+                let title = match (which, surface.apart_surface()) {
+                    (Which::Main, _) => {
+                        surface.build_scene(&mut view.scene);
+                        surface.title()
+                    }
+                    (Which::Apart, Some(apart)) => {
+                        apart.apart_scene(&mut view.scene);
+                        apart.apart_title()
+                    }
+                    (Which::Apart, None) => String::new(),
+                };
+                view.gfx.draw(&view.scene);
                 if let Some(log) = &mut self.frames {
                     log.drawn(started);
                 }
-                let title = self.surface.title();
-                if !title.is_empty() && title != self.title {
-                    gfx.window.set_title(&title);
-                    self.title = title;
+                if !title.is_empty() && title != view.title {
+                    view.gfx.window.set_title(&title);
+                    view.title = title;
+                }
+                // This window shows it now; the other may follow it.
+                if redraw {
+                    self.redraw(Some(which));
                 }
                 return;
             }
             WindowEvent::CursorMoved { position, .. } => {
-                self.cursor = (position.x as f32, position.y as f32);
-                self.moved = Some((position.x as f32, position.y as f32));
-                return;
+                view.cursor = (position.x as f32, position.y as f32);
+                view.moved = Some(view.cursor);
+                None
             }
-            WindowEvent::CursorLeft { .. } => Event::PointerLeft,
+            WindowEvent::CursorLeft { .. } => Some(Event::PointerLeft),
             WindowEvent::MouseInput {
                 button: MouseButton::Left,
                 state,
@@ -546,48 +705,38 @@ impl ApplicationHandler<Ready> for App {
             } => match state {
                 ElementState::Pressed => {
                     let now = Instant::now();
-                    let (x, y) = self.cursor;
-                    let near = DOUBLE_CLICK_PIXELS * gfx.window.scale_factor() as f32;
-                    self.double = self.last_press.is_some_and(|(at, (px, py))| {
+                    let (x, y) = view.cursor;
+                    let near = DOUBLE_CLICK_PIXELS * view.gfx.window.scale_factor() as f32;
+                    view.double = view.last_press.is_some_and(|(at, (px, py))| {
                         now - at <= DOUBLE_CLICK && (x - px).abs() <= near && (y - py).abs() <= near
                     });
                     // A third press starts over.
-                    self.last_press = (!self.double).then_some((now, (x, y)));
-                    Event::PointerDown
+                    view.last_press = (!view.double).then_some((now, (x, y)));
+                    Some(Event::PointerDown)
                 }
                 ElementState::Released => {
-                    let mut redraw = self.surface.handle(Event::PointerUp);
-                    if std::mem::take(&mut self.double) {
-                        redraw |= self.surface.handle(Event::DoubleClick);
-                    }
-                    if redraw {
-                        gfx.window.request_redraw();
-                    }
-                    return;
+                    redraw |= send(surface, which, Event::PointerUp);
+                    std::mem::take(&mut view.double).then_some(Event::DoubleClick)
                 }
             },
             WindowEvent::MouseInput {
                 button: MouseButton::Right,
                 state: ElementState::Pressed,
                 ..
-            } => Event::SecondaryDown,
+            } => Some(Event::SecondaryDown),
             WindowEvent::Touch(touch) => {
                 let phase = match touch.phase {
                     winit::event::TouchPhase::Started => TouchPhase::Start,
                     winit::event::TouchPhase::Moved => TouchPhase::Move,
                     winit::event::TouchPhase::Ended | winit::event::TouchPhase::Cancelled => TouchPhase::End,
                 };
-                let events = self
+                let events = view
                     .touches
                     .handle(touch.id, phase, touch.location.x as f32, touch.location.y as f32);
-                let mut redraw = false;
                 for event in events {
-                    redraw |= self.surface.handle(event);
+                    redraw |= send(surface, which, event);
                 }
-                if redraw {
-                    gfx.window.request_redraw();
-                }
-                return;
+                None
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 let state = modifiers.state();
@@ -595,9 +744,9 @@ impl ApplicationHandler<Ready> for App {
                 self.command = state.control_key() || state.super_key();
                 self.alt = state.alt_key();
                 self.shift = state.shift_key();
-                Event::Modifiers {
+                Some(Event::Modifiers {
                     adding: self.command || self.shift,
-                }
+                })
             }
             WindowEvent::KeyboardInput { event: key_event, .. } if key_event.state == ElementState::Pressed => {
                 let alt_letter = letter_of(key_event.physical_key).filter(|_| self.alt && !self.command);
@@ -619,7 +768,7 @@ impl ApplicationHandler<Ready> for App {
                             (true, "z") => vec![Key::Undo],
                             (true, "y") => vec![Key::Redo],
                             // Over the chart with no text typed, it pastes what was copied there.
-                            (true, "v") if !self.surface.takes_text() => vec![Key::Paste],
+                            (true, "v") if !surface.takes_text() => vec![Key::Paste],
                             // Pasted text is typed in; a line break would submit, so it becomes a space.
                             (true, "v") => self
                                 .clipboard
@@ -632,73 +781,78 @@ impl ApplicationHandler<Ready> for App {
                                     c => Some(Key::Char(c)),
                                 })
                                 .collect(),
-                            _ => return,
+                            _ => Vec::new(),
                         }
                     }
                     // All of what a key typed (a composed character can be more than one).
                     WinitKey::Character(text) => text.chars().map(Key::Char).collect(),
-                    key => match translate_key(key, self.shift, self.command) {
-                        Some(key) => vec![key],
-                        None => return,
-                    },
+                    key => translate_key(key, self.shift, self.command).into_iter().collect(),
                 };
-                let mut redraw = false;
                 for key in keys {
-                    redraw |= self.surface.handle(Event::Key(key));
+                    redraw |= send(surface, which, Event::Key(key));
                 }
-                if let Some(text) = self.surface.take_copied() {
+                if let Some(text) = surface.take_copied() {
                     self.clipboard.copy(text);
                 }
-                if redraw {
-                    gfx.window.request_redraw();
-                }
-                return;
+                None
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let delta = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(p) => p.y as f32 / 50.0,
                 };
-                Event::Wheel {
-                    x: self.cursor.0,
+                Some(Event::Wheel {
+                    x: view.cursor.0,
                     delta,
-                }
+                })
             }
-            _ => return,
+            _ => None,
         };
-        if self.surface.handle(chart_event) {
-            gfx.window.request_redraw();
+        if let Some(event) = chart_event {
+            redraw |= send(surface, which, event);
+        }
+        if redraw {
+            self.redraw(None);
         }
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        // The moves that came since the last frame, as one.
-        if let Some((x, y)) = self.moved.take()
-            && self.surface.handle(Event::PointerMoved { x, y })
-            && let Some(gfx) = &self.gfx
-        {
-            gfx.window.request_redraw();
+        let surface = &mut *self.surface;
+        let mut redraw = false;
+        for (which, view) in [(Which::Main, self.main.as_mut()), (Which::Apart, self.apart.as_mut())] {
+            let Some(view) = view else { continue };
+            // The moves that came since the last frame, as one.
+            if let Some((x, y)) = view.moved.take() {
+                redraw |= send(surface, which, Event::PointerMoved { x, y });
+            }
+            // The pointer shows what a press would do where it is.
+            let shape = match (which, surface.apart_surface()) {
+                (Which::Main, _) => surface.pointer_shape(),
+                (Which::Apart, Some(apart)) => apart.apart_pointer_shape(),
+                (Which::Apart, None) => PointerShape::Default,
+            };
+            if shape != view.shape {
+                view.shape = shape;
+                view.gfx.window.set_cursor(match shape {
+                    PointerShape::Default => CursorIcon::Default,
+                    PointerShape::Crosshair => CursorIcon::Crosshair,
+                    PointerShape::Hand => CursorIcon::Pointer,
+                    PointerShape::Text => CursorIcon::Text,
+                    PointerShape::ResizeVertical => CursorIcon::NsResize,
+                    PointerShape::ResizeHorizontal => CursorIcon::EwResize,
+                    PointerShape::Grabbing => CursorIcon::Grabbing,
+                    PointerShape::Move => CursorIcon::Move,
+                });
+            }
         }
-        // The pointer shows what a press would do where it is.
-        let shape = self.surface.pointer_shape();
-        if shape != self.shape
-            && let Some(gfx) = &self.gfx
-        {
-            self.shape = shape;
-            gfx.window.set_cursor(match shape {
-                PointerShape::Default => CursorIcon::Default,
-                PointerShape::Crosshair => CursorIcon::Crosshair,
-                PointerShape::Hand => CursorIcon::Pointer,
-                PointerShape::Text => CursorIcon::Text,
-                PointerShape::ResizeVertical => CursorIcon::NsResize,
-                PointerShape::ResizeHorizontal => CursorIcon::EwResize,
-                PointerShape::Grabbing => CursorIcon::Grabbing,
-                PointerShape::Move => CursorIcon::Move,
-            });
+        if redraw {
+            self.redraw(None);
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.place_apart(event_loop);
         // While something animates (a replay playing), send a tick per frame; while only waiting for data, fewer;
         // otherwise sleep.
-        if self.gfx.is_none() || !self.surface.needs_tick() {
+        if self.main.is_none() || !self.surface.needs_tick() {
             self.last_tick = None;
             event_loop.set_control_flow(ControlFlow::Wait);
             return;
@@ -708,10 +862,8 @@ impl ApplicationHandler<Ready> for App {
             .last_tick
             .map_or(0.0, |t| now.duration_since(t).as_secs_f32().min(0.25));
         self.last_tick = Some(now);
-        if self.surface.handle(Event::Tick { dt })
-            && let Some(gfx) = &self.gfx
-        {
-            gfx.window.request_redraw();
+        if self.surface.handle(Event::Tick { dt }) {
+            self.redraw(None);
         }
         // A frame's time while something moves; live data and the like do with a tenth of a second.
         let wait = if self.surface.animating() { 16 } else { 100 };

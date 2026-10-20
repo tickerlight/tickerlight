@@ -163,6 +163,15 @@ impl Cell {
     }
 }
 
+/// The window of its own the last chart is shown in, outside the layout.
+struct ApartView {
+    /// In the second window's device pixels.
+    size: (f32, f32),
+    scale: f32,
+    /// Where the pointer is in it.
+    pointer: Option<(f32, f32)>,
+}
+
 /// Width of the right column, logical pixels.
 const RIGHT_WIDTH: f32 = 280.0;
 /// The narrowest the right column gets in a small window.
@@ -234,6 +243,8 @@ pub struct Workspace<C> {
     hidden: Vec<Dock>,
     /// The docks fading in, and how far they are, from 0 to 1 over [`APPEAR`] seconds.
     appear: Vec<(Dock, f32)>,
+    /// The second window, when the last chart is shown in one (see [`Workspace::open_apart`]).
+    apart: Option<ApartView>,
 }
 
 /// Seconds a dock takes to fade in when what it shows is new (another page, a drawing selected).
@@ -260,6 +271,7 @@ impl<C> Workspace<C> {
             float_extent: None,
             hidden: Vec::new(),
             appear: Vec::new(),
+            apart: None,
         }
     }
 
@@ -325,10 +337,139 @@ impl<C> Workspace<C> {
     /// Shows another chart in cell `i`, and returns the old one.
     pub fn set_chart_at(&mut self, i: usize, chart: Chart) -> Chart {
         let old = std::mem::replace(&mut self.charts[i].chart, chart);
-        self.charts[i].chart.set_scale(self.scale);
+        let scale = self.scale_of(i);
+        self.charts[i].chart.set_scale(scale);
         self.charts[i].chart.resources_mut().insert(LinkedTime(None));
         self.lay_out();
         old
+    }
+
+    /// The scale of the window chart `i` is in.
+    fn scale_of(&self, i: usize) -> f32 {
+        match &self.apart {
+            Some(apart) if Some(i) == self.apart() => apart.scale,
+            _ => self.scale,
+        }
+    }
+
+    /// How many charts this window shows: those of the layout, not the one in a window of its own.
+    fn shown(&self) -> usize {
+        self.charts.len() - usize::from(self.apart.is_some())
+    }
+
+    /// Which chart is shown in a window of its own: the last one, past the layout's, while there is such a window.
+    pub fn apart(&self) -> Option<usize> {
+        self.apart.as_ref().map(|_| self.charts.len() - 1)
+    }
+
+    /// Shows `chart` in a second window, beside the layout's, as large as the active chart until the window tells
+    /// its size; it takes part as a cell does (the time under the pointer, the right edge followed, activated by a
+    /// press). Replaces the one there was.
+    pub fn open_apart(&mut self, mut chart: Chart) {
+        if let Some(i) = self.apart() {
+            self.set_chart_at(i, chart);
+            return;
+        }
+        let area = self.chart_area();
+        chart.set_scale(self.scale);
+        self.apart = Some(ApartView {
+            size: (area.w.max(1.0), area.h.max(1.0)),
+            scale: self.scale,
+            pointer: None,
+        });
+        self.charts.push(Cell::new(chart));
+        self.link(None);
+        self.lay_out();
+    }
+
+    /// Closes the second window and returns its chart; an active one leaves that to the last chart of the layout.
+    pub fn close_apart(&mut self) -> Option<Chart> {
+        self.apart()?;
+        self.apart = None;
+        let cell = self.charts.pop()?;
+        self.active = self.active.min(self.charts.len() - 1);
+        self.link(None);
+        Some(cell.chart)
+    }
+
+    /// The second window's size in its device pixels.
+    pub fn apart_resize(&mut self, width: f32, height: f32) {
+        if let Some(apart) = &mut self.apart {
+            apart.size = (width, height);
+            self.lay_out();
+        }
+    }
+
+    pub fn apart_set_scale(&mut self, scale: f32) {
+        let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+        if let Some(i) = self.apart()
+            && let Some(apart) = &mut self.apart
+        {
+            apart.scale = scale;
+            self.charts[i].chart.set_scale(scale);
+            self.lay_out();
+        }
+    }
+
+    /// An event in the second window: all of it is the chart's. A press or a key there makes it the active chart;
+    /// ticks and the keys held go to every chart, as in this window. Returns whether a redraw is needed.
+    pub fn apart_handle(&mut self, event: Event) -> bool {
+        let Some(i) = self.apart() else { return false };
+        let active = self.active;
+        let redraw = match event {
+            Event::Tick { .. } | Event::Modifiers { .. } => return self.handle(event),
+            Event::PointerMoved { x, y } => {
+                if let Some(apart) = &mut self.apart {
+                    apart.pointer = Some((x, y));
+                }
+                self.send_to(i, event) | self.link(Some(i))
+            }
+            Event::PointerLeft => {
+                if let Some(apart) = &mut self.apart {
+                    apart.pointer = None;
+                }
+                self.send_to(i, event) | self.link(None)
+            }
+            Event::PointerDown | Event::SecondaryDown | Event::Key(_) | Event::Command(_) => {
+                // Work on another chart leaves what this window's controls were doing.
+                if matches!(event, Event::PointerDown | Event::SecondaryDown) {
+                    self.state.menu = None;
+                    self.state.focus = None;
+                }
+                self.active = i;
+                self.send_to(i, event)
+            }
+            Event::PointerUp | Event::DoubleClick | Event::Wheel { .. } => self.send_to(i, event),
+        };
+        redraw || self.active != active
+    }
+
+    /// The second window's frame: its chart, outlined while it is the active one of several.
+    pub fn apart_scene(&mut self, scene: &mut Scene) {
+        scene.clear();
+        let (Some(i), Some(apart)) = (self.apart(), &self.apart) else {
+            return;
+        };
+        let (w, h) = apart.size;
+        let line = apart.scale.round().max(1.0);
+        let cell = &mut self.charts[i];
+        if cell.dirty {
+            cell.chart.build_scene(&mut cell.scene);
+            cell.dirty = false;
+        }
+        scene.background = cell.chart.style.background;
+        let area = Area { x: 0.0, y: 0.0, w, h };
+        scene.append(&cell.scene, (0.0, 0.0), area.clip());
+        if i == self.active {
+            scene.next_layer();
+            scene.stroke_rounded(0.0, 0.0, w, h, 0.0, line, self.theme.accent);
+        }
+    }
+
+    /// What the pointer looks like in the second window.
+    pub fn apart_pointer_shape(&self) -> PointerShape {
+        self.apart()
+            .map_or(PointerShape::Default, |i| self.charts[i].chart.pointer_shape())
     }
 
     /// Which chart is active.
@@ -345,11 +486,13 @@ impl<C> Workspace<C> {
     }
 
     /// Shows the charts in `layout`: cells it adds get charts from `new`, the last ones it drops are returned.
-    /// An active chart in a cell that goes takes the last cell kept, in place of the chart there.
+    /// An active chart in a cell that goes takes the last cell kept, in place of the chart there. The chart in a
+    /// window of its own stays there, after the layout's.
     pub fn set_layout(&mut self, layout: Layout, mut new: impl FnMut() -> Chart) -> Vec<Chart> {
         self.layout = layout;
         let n = layout.cells();
-        if self.active >= n {
+        let apart = self.apart().map(|i| (self.active == i, self.charts.remove(i)));
+        if apart.as_ref().is_none_or(|(active, _)| !active) && self.active >= n {
             self.charts.swap(self.active, n - 1);
             self.active = n - 1;
         }
@@ -358,6 +501,12 @@ impl<C> Workspace<C> {
             let mut chart = new();
             chart.set_scale(self.scale);
             self.charts.push(Cell::new(chart));
+        }
+        if let Some((active, cell)) = apart {
+            self.charts.push(cell);
+            if active {
+                self.active = n;
+            }
         }
         (self.hover, self.drag) = (None, None);
         self.link(None);
@@ -405,8 +554,12 @@ impl<C> Workspace<C> {
         self.lay_out();
     }
 
-    /// Whether `dock` has panels and shows them.
+    /// Whether `dock` has panels and shows them. Those over the active chart do not while it is in a window of its
+    /// own.
     fn has(&self, dock: Dock) -> bool {
+        if matches!(dock, Dock::Overlay | Dock::Float) && self.apart() == Some(self.active) {
+            return false;
+        }
         !self.hidden.contains(&dock) && self.panels.iter().any(|(d, _)| *d == dock)
     }
 
@@ -505,7 +658,16 @@ impl<C> Workspace<C> {
                 w: chart_w,
                 h: bottom.min(below),
             },
-            Region::Chart(i) => self.layout.cell(i, charts, g),
+            Region::Chart(i) => match &self.apart {
+                // All of the second window.
+                Some(apart) if Some(i) == self.apart() => Area {
+                    x: 0.0,
+                    y: 0.0,
+                    w: apart.size.0,
+                    h: apart.size.1,
+                },
+                _ => self.layout.cell(i, charts, g),
+            },
             // Along the bottom of the active chart's plot, above its time axis: clear of the legend and the
             // indicators' rows at the top.
             Region::Panels(Dock::Overlay) => {
@@ -570,7 +732,10 @@ impl<C> Workspace<C> {
         if self.menu_area().is_some_and(|m| m.contains(point)) {
             return Region::Menu;
         }
-        if self.float_extent.is_some() && self.area(Region::Panels(Dock::Float)).contains(point) {
+        if self.float_extent.is_some()
+            && self.has(Dock::Float)
+            && self.area(Region::Panels(Dock::Float)).contains(point)
+        {
             return Region::Panels(Dock::Float);
         }
         [
@@ -584,8 +749,8 @@ impl<C> Workspace<C> {
         .into_iter()
         .find(|&r| self.has(r.dock()) && self.area(r).contains(point))
         .unwrap_or_else(|| {
-            let cell = (0..self.charts.len()).find(|&i| self.area(Region::Chart(i)).contains(point));
-            Region::Chart(cell.unwrap_or(self.active))
+            let cell = (0..self.shown()).find(|&i| self.area(Region::Chart(i)).contains(point));
+            Region::Chart(cell.unwrap_or(self.active.min(self.shown() - 1)))
         })
     }
 
@@ -668,7 +833,10 @@ impl<C> Workspace<C> {
     /// Returns whether that changed.
     fn link(&mut self, over: Option<usize>) -> bool {
         let time = over.filter(|_| self.charts.len() > 1).and_then(|i| {
-            let (x, _) = self.pointer?;
+            let (x, _) = match &self.apart {
+                Some(apart) if Some(i) == self.apart() => apart.pointer?,
+                _ => self.pointer?,
+            };
             let area = self.area(Region::Chart(i));
             let chart = &self.charts[i].chart;
             let bar = chart.time_scale().index_of((x - area.x) as f64).floor();
@@ -872,7 +1040,8 @@ impl<C> Surface for Workspace<C> {
 
     fn set_scale(&mut self, scale: f32) {
         self.scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
-        for cell in &mut self.charts {
+        let shown = self.shown();
+        for cell in &mut self.charts[..shown] {
             cell.chart.set_scale(self.scale);
         }
         self.lay_out();
@@ -978,7 +1147,7 @@ impl<C> Surface for Workspace<C> {
                 self.pointer_to_chart();
                 let i = match was {
                     Some(Region::Chart(i)) => i,
-                    _ => self.active,
+                    _ => self.active.min(self.shown() - 1),
                 };
                 self.send_to(i, event) | self.link(None)
             }
@@ -1061,7 +1230,8 @@ impl<C> Surface for Workspace<C> {
     fn build_scene(&mut self, scene: &mut Scene) {
         // What the bar shows may have changed its width (a longer status, say).
         self.measure();
-        for cell in &mut self.charts {
+        let shown = self.shown();
+        for cell in &mut self.charts[..shown] {
             if cell.dirty {
                 cell.chart.build_scene(&mut cell.scene);
                 cell.dirty = false;
@@ -1070,7 +1240,7 @@ impl<C> Surface for Workspace<C> {
         scene.clear();
         scene.background = self.theme.canvas;
         let r = self.theme.card_radius * self.scale;
-        for (i, cell) in self.charts.iter().enumerate() {
+        for (i, cell) in self.charts[..shown].iter().enumerate() {
             let chart = self.area(Region::Chart(i));
             scene.fill_rounded(chart.x, chart.y, chart.w, chart.h, r, cell.chart.style.background);
             scene.append(&cell.scene, (chart.x, chart.y), chart.clip());
@@ -1542,5 +1712,45 @@ mod tests {
         // Back to one chart: the second goes, the first is active.
         assert_eq!(w.set_layout(Layout::One, chart).len(), 1);
         assert_eq!((w.charts(), w.active()), (1, 0));
+    }
+
+    #[test]
+    fn a_chart_in_a_window_of_its_own_is_driven_apart_follows_and_stays_through_layouts() {
+        let mut w = workspace().with(Dock::Overlay, |ui: &mut Ui, _: &mut Chart, _: &mut State| {
+            ui.label("Status")
+        });
+        assert!(w.has(Dock::Overlay));
+        w.open_apart(chart());
+        w.apart_set_scale(1.0);
+        w.apart_resize(700.0, 500.0);
+        assert_eq!((w.charts(), w.apart(), w.active()), (2, Some(1), 0));
+        // This window's chart keeps its place; the other has all of its own window.
+        let main = w.area(Region::Chart(0));
+        assert!(main.w > 500.0);
+        let mut scene = Scene::new();
+        w.build_scene(&mut scene);
+        w.apart_scene(&mut scene);
+        assert!(!scene.rects.is_empty());
+        // A drag there scrolls the chart here to the same time, and makes it active.
+        w.apart_handle(Event::PointerMoved { x: 300.0, y: 250.0 });
+        let linked = w.chart_at(0).resources().get::<LinkedTime>().and_then(|l| l.0);
+        assert!(linked.is_some());
+        w.apart_handle(Event::PointerDown);
+        assert_eq!(w.active(), 1);
+        let before = w.right_time(0).unwrap();
+        w.apart_handle(Event::PointerMoved { x: 420.0, y: 250.0 });
+        w.apart_handle(Event::PointerUp);
+        let (first, apart) = (w.right_time(0).unwrap(), w.right_time(1).unwrap());
+        assert!(first < before && (first - apart).abs() < 1.0);
+        // The panels' overlay is not drawn over this window's chart while that one is active.
+        assert!(!w.has(Dock::Overlay));
+        // Layouts come and go around it; it stays last, and active.
+        assert!(w.set_layout(Layout::Grid, chart).is_empty());
+        assert_eq!((w.charts(), w.apart(), w.active()), (5, Some(4), 4));
+        assert_eq!(w.set_layout(Layout::One, chart).len(), 3);
+        assert_eq!((w.charts(), w.apart(), w.active()), (2, Some(1), 1));
+        // Closing it leaves the active part to the layout's last chart.
+        assert!(w.close_apart().is_some());
+        assert_eq!((w.charts(), w.apart(), w.active()), (1, None, 0));
     }
 }

@@ -18,4 +18,4 @@ pub use renderer::Renderer;
 pub use window::run_on_canvas;
 #[cfg(not(target_arch = "wasm32"))]
 pub use window::run_placed;
-pub use window::{Place, run};
+pub use window::{Place, Places, run};

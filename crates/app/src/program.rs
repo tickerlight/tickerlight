@@ -19,7 +19,7 @@ use tickerlight_core::builtin::{
 use tickerlight_core::calendar::{DateTime, Zone};
 use tickerlight_core::plugin::{names, order};
 use tickerlight_core::{
-    Candles, Chart, ChartStyle, Event, Footprint, Key, Look, Scene, Surface, Time, Trade, Trades, VolumeProfile,
+    Apart, Candles, Chart, ChartStyle, Event, Footprint, Key, Look, Scene, Surface, Time, Trade, Trades, VolumeProfile,
     native_step, span_label,
 };
 use tickerlight_deribit::Deribit;
@@ -479,6 +479,8 @@ pub struct Program {
     pub watch: Watchlist,
     /// The charts the window shows.
     pub layout: Layout,
+    /// Whether a chart is wanted in a window of its own (see [`Workspace::open_apart`]).
+    pub apart: bool,
     /// The clock every chart shows its times on.
     pub zone: Zone,
     /// The colors of the window: dark or light.
@@ -699,6 +701,9 @@ fn page_strip(ui: &mut Ui, _: &mut Chart, p: &mut Program) {
 
 /// What the menu of the layouts is found by.
 pub const LAYOUTS: &str = "Layout";
+/// The item of that menu that opens a chart in a window of its own, and the one that closes it.
+pub const OPEN_APART: &str = "Chart in a new window";
+pub const CLOSE_APART: &str = "Close the chart's window";
 /// What the menu of the looks is found by.
 pub const LOOKS: &str = "Look";
 
@@ -714,11 +719,16 @@ fn page_panel(ui: &mut Ui, _: &mut Chart, p: &mut Program) {
     }
     ui.tip("The indicators on the chart and those to add. Key /");
     let at = Layout::ALL.iter().position(|&l| l == p.layout).unwrap_or(0);
-    let (names, icons) = (Layout::ALL.map(Layout::label), Layout::ALL.map(Layout::icon));
-    if let Some(pick) = ui.icon_menu(p.layout.icon(), LAYOUTS, Some(at), &names, &icons) {
-        p.layout = Layout::ALL[pick];
+    let [one, columns, rows, grid] = Layout::ALL.map(Layout::label);
+    let [a, b, c, d] = Layout::ALL.map(Layout::icon);
+    let apart = if p.apart { CLOSE_APART } else { OPEN_APART };
+    let (names, icons) = ([one, columns, rows, grid, apart], [a, b, c, d, Icon::NewWindow]);
+    match ui.icon_menu(p.layout.icon(), LAYOUTS, Some(at), &names, &icons) {
+        Some(pick) if pick < Layout::ALL.len() => p.layout = Layout::ALL[pick],
+        Some(_) => p.apart = !p.apart,
+        None => {}
     }
-    ui.tip("Layout: how many charts the window shows, and how they are placed");
+    ui.tip("Layout: how many charts the window shows, and how they are placed; a chart in a window of its own");
     let look_icon = |look| match look {
         Look::Dark => Icon::Moon,
         Look::Light => Icon::Sun,
@@ -982,6 +992,7 @@ impl Window {
             exported: None,
             watch: Watchlist::load(&source.root),
             layout: Layout::One,
+            apart: false,
             zone: Zone::Utc,
             look: Look::Dark,
             columns_text: columns.to_text("; "),
@@ -1060,18 +1071,26 @@ impl Window {
     }
 
     /// A window that starts where the program was left: the layout, and in each chart the series (the active
-    /// one's unless `series` asks for another), its timeframe and the session going on then.
+    /// one's unless `series` asks for another), its timeframe and the session going on then; the chart in a window
+    /// of its own too.
     pub fn resumed(source: Source, series: Option<Series>) -> Self {
         let resume = Resume::load(&source.root);
         let mut charts = resume.as_ref().map(|r| r.charts.clone()).unwrap_or_default();
+        let mut apart = resume.as_ref().and_then(|r| r.apart.clone());
         let active = resume.as_ref().map_or(0, |r| r.active);
+        let apart_active = apart.is_some() && active >= charts.len();
         if let Some(series) = series {
             let asked = Resumed {
                 series,
                 timeframe: None,
                 session: None,
             };
-            match charts.get_mut(active) {
+            let chart = if apart_active {
+                apart.as_mut()
+            } else {
+                charts.get_mut(active)
+            };
+            match chart {
                 Some(chart) if chart.series != asked.series => *chart = asked,
                 Some(_) => {}
                 None => charts = vec![asked],
@@ -1096,7 +1115,14 @@ impl Window {
         let mut window = Self::new(source, first.series.clone(), None);
         window.resume_chart(&first);
         window.set_layout(layout, charts);
-        window.activate(active.min(layout.cells() - 1));
+        if let Some(apart) = apart {
+            window.open_apart(Some(apart));
+        }
+        window.activate(if apart_active {
+            layout.cells()
+        } else {
+            active.min(layout.cells() - 1)
+        });
         window.workspace.ctx.zone = zone;
         window.show_zone();
         window.workspace.ctx.look = look;
@@ -1198,12 +1224,15 @@ impl Window {
                 session,
             });
         }
+        // The chart in a window of its own is the last one.
+        let apart = self.workspace.apart().and_then(|_| charts.pop());
         let resume = Resume {
             layout: self.workspace.layout(),
             active: self.workspace.active(),
             zone: self.workspace.ctx.zone,
             look: self.workspace.ctx.look,
             charts,
+            apart,
         };
         let text = resume.to_text();
         if text != self.resumed {
@@ -2114,14 +2143,16 @@ impl Window {
     }
 
     /// Shows the charts in `layout`. A chart it adds shows the next of `given`, else what the active one does; the
-    /// charts it drops are saved first. The active chart stays (see [`Workspace::set_layout`]).
+    /// charts it drops are saved first. The active chart stays (see [`Workspace::set_layout`]), and so does the one
+    /// in a window of its own.
     fn set_layout(&mut self, layout: Layout, given: Vec<Resumed>) {
         let n = layout.cells();
         let active = self.workspace.active();
+        let cells = self.workspace.charts() - usize::from(self.workspace.apart().is_some());
         // The charts that go are saved: the cells past the layout's but the active one, which takes the place of
         // the last cell kept.
-        let moves = active >= n;
-        for i in n - usize::from(moves)..self.workspace.charts() {
+        let moves = active >= n && active < cells;
+        for i in n - usize::from(moves)..cells {
             if i != active {
                 self.with_cell(i, |w| w.autosave(true));
             }
@@ -2129,33 +2160,70 @@ impl Window {
         if moves {
             self.parked.swap(active, n - 1);
         }
-        let shown = (self.workspace.ctx.shown.clone()).or_else(|| self.loading.as_ref().map(|(s, _)| s.clone()));
-        let timeframe = self.workspace.chart().timeframe();
-        let venue = shown.as_ref().map_or(Venue::Binance(Market::Spot), |s| s.venue);
-        let old = self.workspace.charts();
+        let apart = self.workspace.apart().map(|i| self.parked.remove(i));
+        let wanted = self.wanted();
+        let venue = wanted.as_ref().map_or(Venue::Binance(Market::Spot), |c| c.series.venue);
         self.workspace.set_layout(layout, || new_chart(Candles::new(), venue));
         self.parked.truncate(n);
         self.parked.resize_with(n, Parked::default);
+        self.parked.extend(apart);
         self.workspace.ctx.layout = layout;
         let mut given = given.into_iter();
-        for i in old..n {
-            let chart = given.next().or_else(|| {
-                shown.clone().map(|series| Resumed {
-                    series,
-                    timeframe,
-                    session: None,
-                })
-            });
-            let Some(chart) = chart else { continue };
-            self.with_cell(i, |w| {
-                let studies = w.studies.clone();
-                set_studies(w.workspace.chart_mut(), studies);
-                w.resume_chart(&chart);
-                let p = &mut w.workspace.ctx;
-                (p.symbol, p.venue) = (chart.series.symbol.clone(), chart.series.venue.index());
-                w.start(chart.series.clone());
-            });
+        for i in cells..n {
+            if let Some(chart) = given.next().or_else(|| wanted.clone()) {
+                self.fill(i, chart);
+            }
         }
+    }
+
+    /// What a chart added beside the active one shows at first: what that one shows, or is loading.
+    fn wanted(&self) -> Option<Resumed> {
+        let shown = (self.workspace.ctx.shown.clone()).or_else(|| self.loading.as_ref().map(|(s, _)| s.clone()));
+        shown.map(|series| Resumed {
+            series,
+            timeframe: self.workspace.chart().timeframe(),
+            session: None,
+        })
+    }
+
+    /// Loads `chart` into the new chart `i`, with the indicators every chart has.
+    fn fill(&mut self, i: usize, chart: Resumed) {
+        self.with_cell(i, |w| {
+            let studies = w.studies.clone();
+            set_studies(w.workspace.chart_mut(), studies);
+            w.resume_chart(&chart);
+            let p = &mut w.workspace.ctx;
+            (p.symbol, p.venue) = (chart.series.symbol.clone(), chart.series.venue.index());
+            w.start(chart.series.clone());
+        });
+    }
+
+    /// Shows a chart in a window of its own: `given`, else what the active chart shows. It is a chart of the
+    /// window as a cell is: its state parked while another is active, the replay put on it.
+    fn open_apart(&mut self, given: Option<Resumed>) {
+        self.workspace.ctx.apart = true;
+        if self.workspace.apart().is_some() {
+            return;
+        }
+        let chart = given.or_else(|| self.wanted());
+        let venue = chart.as_ref().map_or(Venue::Binance(Market::Spot), |c| c.series.venue);
+        self.workspace.open_apart(new_chart(Candles::new(), venue));
+        self.parked.push(Parked::default());
+        if let Some(chart) = chart {
+            self.fill(self.workspace.charts() - 1, chart);
+        }
+    }
+
+    /// Closes the window of its own chart, saved first; when it was active, the last chart of the layout is.
+    fn close_apart(&mut self) {
+        self.workspace.ctx.apart = false;
+        let Some(i) = self.workspace.apart() else { return };
+        if self.workspace.active() == i {
+            self.activate(i - 1);
+        }
+        self.with_cell(i, |w| w.autosave(true));
+        self.workspace.close_apart();
+        self.parked.pop();
     }
 
     /// Whether the active chart is in a replay.
@@ -2555,22 +2623,19 @@ impl Window {
     }
 }
 
-impl Surface for Window {
-    fn resize(&mut self, width: f32, height: f32) {
-        self.workspace.resize(width, height);
-    }
-
-    fn set_scale(&mut self, scale: f32) {
-        self.workspace.set_scale(scale);
-    }
-
-    fn handle(&mut self, event: Event) -> bool {
+impl Window {
+    /// An event in the window, or in the window of its own chart (`apart`), then what the program does after one.
+    fn handle_in(&mut self, apart: bool, event: Event) -> bool {
         let page = self.workspace.ctx.page;
         let replaying = self.replaying();
         let active = self.workspace.active();
         // An order placed by this event counts as placed now.
         let mut redraw = self.tick_clock();
-        redraw |= self.shortcut(event) || self.workspace.handle(event);
+        redraw |= if apart {
+            self.workspace.apart_handle(event)
+        } else {
+            self.shortcut(event) || self.workspace.handle(event)
+        };
         // A press made another chart active: its state comes out, the other's is parked.
         let pressed = self.workspace.active();
         if pressed != active {
@@ -2592,6 +2657,14 @@ impl Surface for Window {
         }
         if self.workspace.ctx.layout != self.workspace.layout() {
             self.set_layout(self.workspace.ctx.layout, Vec::new());
+            redraw = true;
+        }
+        if self.workspace.ctx.apart != self.workspace.apart().is_some() {
+            if self.workspace.ctx.apart {
+                self.open_apart(None);
+            } else {
+                self.close_apart();
+            }
             redraw = true;
         }
         if let Some(series) = self.workspace.ctx.request.take() {
@@ -2643,6 +2716,37 @@ impl Surface for Window {
         redraw | self.sync_flow()
     }
 
+    /// The title of chart `i`'s series: the symbol, where it is from and the timeframe: `BTCUSDT Binance Spot 15m`,
+    /// `ACME File 1h`.
+    fn title_of(&self, i: usize) -> String {
+        let shown = if i == self.workspace.active() {
+            &self.workspace.ctx.shown
+        } else {
+            &self.parked[i].shown
+        };
+        let Some(series) = shown else {
+            return String::new();
+        };
+        let chart = self.workspace.chart_at(i);
+        let step = chart.timeframe().or(native_step(chart.base())).unwrap_or(60_000);
+        let SeriesTitle { symbol, source } = series_title(series);
+        format!("{symbol} {source} {}", span_label(step))
+    }
+}
+
+impl Surface for Window {
+    fn resize(&mut self, width: f32, height: f32) {
+        self.workspace.resize(width, height);
+    }
+
+    fn set_scale(&mut self, scale: f32) {
+        self.workspace.set_scale(scale);
+    }
+
+    fn handle(&mut self, event: Event) -> bool {
+        self.handle_in(false, event)
+    }
+
     fn needs_tick(&self) -> bool {
         let busy = |p: &Parked| p.loading.is_some() || p.flow.loading.is_some() || p.unsaved || p.flow.live.is_some();
         self.workspace.needs_tick()
@@ -2665,7 +2769,8 @@ impl Surface for Window {
         let card = self.first_load();
         self.workspace.ctx.loading_card = card;
         self.workspace.build_scene(scene);
-        if card {
+        // The card goes where the active chart is: here, or in its window of its own.
+        if card && self.workspace.apart() != Some(self.workspace.active()) {
             self.loading_card(scene);
         }
     }
@@ -2684,13 +2789,51 @@ impl Surface for Window {
 
     /// The symbol, where it is from and the timeframe: `BTCUSDT Binance Spot 15m`, `ACME File 1h`.
     fn title(&self) -> String {
-        let Some(series) = &self.workspace.ctx.shown else {
-            return String::new();
-        };
-        let chart = self.workspace.chart();
-        let step = chart.timeframe().or(native_step(chart.base())).unwrap_or(60_000);
-        let SeriesTitle { symbol, source } = series_title(series);
-        format!("{symbol} {source} {}", span_label(step))
+        self.title_of(self.workspace.active())
+    }
+
+    fn apart_surface(&mut self) -> Option<&mut dyn Apart> {
+        Some(self)
+    }
+}
+
+/// The window of its own chart: the program's menu opens and closes it, the backend shows it.
+impl Apart for Window {
+    fn apart_open(&self) -> bool {
+        self.workspace.apart().is_some()
+    }
+
+    fn close_apart(&mut self) {
+        Window::close_apart(self);
+        self.save_resume();
+    }
+
+    fn apart_resize(&mut self, width: f32, height: f32) {
+        self.workspace.apart_resize(width, height);
+    }
+
+    fn apart_set_scale(&mut self, scale: f32) {
+        self.workspace.apart_set_scale(scale);
+    }
+
+    fn apart_handle(&mut self, event: Event) -> bool {
+        self.handle_in(true, event)
+    }
+
+    fn apart_scene(&mut self, scene: &mut Scene) {
+        self.tick_clock();
+        self.workspace.apart_scene(scene);
+        if self.workspace.apart() == Some(self.workspace.active()) && self.first_load() {
+            self.loading_card(scene);
+        }
+    }
+
+    fn apart_title(&self) -> String {
+        self.workspace.apart().map_or_else(String::new, |i| self.title_of(i))
+    }
+
+    fn apart_pointer_shape(&self) -> tickerlight_core::PointerShape {
+        self.workspace.apart_pointer_shape()
     }
 }
 
@@ -3468,6 +3611,111 @@ mod tests {
         click(&mut window, LAYOUTS);
         click(&mut window, "Two charts side by side");
         assert_eq!(zones(&window), [Some(Zone::NewYork); 2]);
+        std::fs::remove_dir_all(&source.root).unwrap();
+    }
+
+    #[test]
+    fn a_chart_in_a_window_of_its_own_is_synced_cut_by_the_replay_and_comes_back() {
+        let source = source("apart");
+        let (year, month) = sync::months_before(now(), 1);
+        let start = Period::Month { year, month }.start();
+        let candles: Vec<Candle> = (0..300)
+            .map(|i| Candle {
+                time: Time(start.0 + i * 60_000),
+                open: 10.0,
+                high: 11.0,
+                low: 9.0,
+                close: 10.5,
+                volume: 1.0,
+            })
+            .collect();
+        let store = Store::new(&source.root);
+        for symbol in ["ETHUSDT", "SOLUSDT"] {
+            store
+                .write(&series(symbol), Period::Month { year, month }, &candles)
+                .unwrap();
+        }
+        let mut window = Window::resumed(source.clone(), Some(series("ETHUSDT")));
+        window.resize(1400.0, 800.0);
+        settle(&mut window);
+        window.build_scene(&mut Scene::new());
+        assert!(!window.apart_open());
+        // The new window shows what the active chart does, past the layout's charts.
+        click(&mut window, LAYOUTS);
+        click(&mut window, OPEN_APART);
+        settle(&mut window);
+        assert!(window.apart_open());
+        window.apart_set_scale(1.0);
+        window.apart_resize(900.0, 600.0);
+        let w = window.workspace();
+        assert_eq!((w.charts(), w.apart(), w.active()), (2, Some(1), 0));
+        assert_eq!(w.chart_at(1).base().len(), 300);
+        let axis = w.chart_at(1).style.price_axis_width;
+        assert_eq!(w.chart_at(1).plot_size().0, 900.0 - axis, "as wide as its window");
+        let first = w.chart_area().center();
+        let mut scene = Scene::new();
+        window.apart_scene(&mut scene);
+        assert_ne!(format!("{scene:?}"), format!("{:?}", Scene::new()), "it draws");
+        // The time under the pointer there is shown on the other chart.
+        window.apart_handle(Event::PointerMoved { x: 300.0, y: 300.0 });
+        let linked = |w: &Window, i| {
+            w.workspace()
+                .chart_at(i)
+                .resources()
+                .get::<tickerlight_core::builtin::LinkedTime>()
+                .and_then(|l| l.0)
+        };
+        assert!(linked(&window, 0).is_some());
+        assert_eq!(linked(&window, 1), None);
+        // A press there makes it the chart the panels act on: another symbol goes into it.
+        window.apart_handle(Event::PointerDown);
+        window.apart_handle(Event::PointerUp);
+        assert_eq!(window.workspace().active(), 1);
+        window.workspace_mut().ctx.request = Some(series("SOLUSDT"));
+        window.handle(Event::Tick { dt: 0.0 });
+        settle(&mut window);
+        assert_eq!(window.workspace().ctx.shown, Some(series("SOLUSDT")));
+        assert_eq!(window.parked[0].shown, Some(series("ETHUSDT")));
+        assert!(window.apart_title().starts_with("SOLUSDT"));
+        // Back to the first, a replay started there cuts the second window's chart at the same bar.
+        window.handle(Event::PointerMoved { x: first.0, y: first.1 });
+        window.handle(Event::PointerDown);
+        window.handle(Event::PointerUp);
+        assert_eq!(window.workspace().active(), 0);
+        start_replay(&mut window);
+        window.handle(Event::Tick { dt: 0.0 });
+        click(&mut window, "Step");
+        let cursor = |w: &Window, i| w.workspace().chart_at(i).cursor();
+        assert!(cursor(&window, 1).is_some());
+        assert_eq!(cursor(&window, 0), cursor(&window, 1));
+        // Another layout keeps it in its window.
+        click(&mut window, LAYOUTS);
+        click(&mut window, "Two charts side by side");
+        settle(&mut window);
+        let w = window.workspace();
+        assert_eq!((w.charts(), w.apart(), w.active()), (3, Some(2), 0));
+        assert_eq!(window.parked[2].shown, Some(series("SOLUSDT")));
+        drop(window);
+
+        // It comes back, cut as it was.
+        let mut window = Window::resumed(source.clone(), None);
+        window.resize(1400.0, 800.0);
+        settle(&mut window);
+        window.handle(Event::Tick { dt: 0.0 });
+        let w = window.workspace();
+        assert_eq!((w.layout(), w.charts(), w.apart()), (Layout::Columns, 3, Some(2)));
+        assert!(window.apart_open());
+        assert_eq!(window.parked[2].shown, Some(series("SOLUSDT")));
+        assert!(cursor(&window, 2).is_some());
+        assert_eq!(cursor(&window, 0), cursor(&window, 2));
+        // Closing it closes it alone.
+        Apart::close_apart(&mut window);
+        let w = window.workspace();
+        assert_eq!((w.charts(), w.apart(), w.ctx.apart), (2, None, false));
+        drop(window);
+        let window = Window::resumed(source.clone(), None);
+        assert_eq!(window.workspace().apart(), None);
+        assert!(!window.apart_open());
         std::fs::remove_dir_all(&source.root).unwrap();
     }
 

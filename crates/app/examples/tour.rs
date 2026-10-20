@@ -19,7 +19,7 @@ use tickerlight_binance::{Interval, Market};
 use tickerlight_core::builtin::{Live, StrategyRun, closed_trades};
 use tickerlight_core::calendar::Zone;
 use tickerlight_core::plugin::commands;
-use tickerlight_core::{Candle, Event, Key, Scene, Surface, Time, native_step};
+use tickerlight_core::{Apart, Candle, Event, Key, Scene, Surface, Time, native_step};
 use tickerlight_ui::panels::short_time;
 
 struct Tour {
@@ -176,7 +176,21 @@ impl Tour {
         let (w, h) = self.size;
         let mut scene = Scene::new();
         self.window.build_scene(&mut scene);
-        let rgba = render_to_rgba(&self.gpu, &scene, w, h);
+        self.write(name, &scene, (w, h))
+    }
+
+    /// The second window, `size` large, as the backend would show it.
+    fn shot_apart(&mut self, name: &str, (w, h): (u32, u32)) -> Result<(), Box<dyn Error>> {
+        self.shots += 1;
+        self.window.apart_set_scale(1.0);
+        self.window.apart_resize(w as f32, h as f32);
+        let mut scene = Scene::new();
+        self.window.apart_scene(&mut scene);
+        self.write(name, &scene, (w, h))
+    }
+
+    fn write(&self, name: &str, scene: &Scene, (w, h): (u32, u32)) -> Result<(), Box<dyn Error>> {
+        let rgba = render_to_rgba(&self.gpu, scene, w, h);
         let path = self.dir.join(format!("{:02}-{name}.png", self.shots));
         let mut encoder = png::Encoder::new(std::io::BufWriter::new(std::fs::File::create(&path)?), w, h);
         encoder.set_color(png::ColorType::Rgba);
@@ -913,6 +927,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     tour.settle(30);
     tour.shot("layout-replay")?;
+    // The active chart in a window of its own, cut by the replay as the layout's charts are.
+    tour.click("Layout");
+    tour.click("Chart in a new window");
+    tour.settle(60);
+    tour.shot_apart("apart-window", (900, 600))?;
+    tour.click("Layout");
+    tour.click("Close the chart's window");
     // A start at random: every chart without its dates, the weekday in their place, and no timeline.
     tour.click("Random start");
     tour.settle(30);
