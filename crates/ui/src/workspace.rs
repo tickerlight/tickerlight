@@ -518,18 +518,20 @@ impl<C> Workspace<C> {
                     ..chart
                 }
             }
-            // Centered on the active chart's plot, as wide as its controls were in the last pass.
+            // Centered on the active chart's plot, as wide and as tall (its rows wrap when the plot is narrow) as its
+            // controls were in the last pass.
             Region::Panels(Dock::Float) => {
                 let chart = active();
                 let pad = self.theme.padding * self.scale;
                 let plot_w = (chart.w - self.chart().style.price_axis_width * self.scale).max(0.0);
-                let content = self.float_extent.map_or(plot_w, |e| e.w);
-                let w = (content + 2.0 * pad).min(chart.w);
+                let row = self.theme.row_height * self.scale;
+                let (content_w, content_h) = self.float_extent.map_or((plot_w, row), |e| (e.w, e.h.max(row)));
+                let w = (content_w + 2.0 * pad).min(chart.w);
                 Area {
                     x: chart.x + ((plot_w - w) / 2.0).max(0.0),
                     y: chart.y + (FLOAT_TOP * self.scale).min(chart.h),
                     w,
-                    h: ((self.theme.row_height + 2.0 * self.theme.padding) * self.scale).min(chart.h),
+                    h: (content_h + 2.0 * pad).min(chart.h),
                 }
             }
             Region::Menu => self.menu_area().unwrap_or_default(),
