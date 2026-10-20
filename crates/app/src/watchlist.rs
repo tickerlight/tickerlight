@@ -718,6 +718,13 @@ pub fn watchlist_panel(ui: &mut Ui, _: &mut Chart, p: &mut Program) {
     {
         sort_rows(&mut rows, sort, |m, symbol| w.ticker(m, symbol));
     }
+    if searching && rows.is_empty() {
+        // An empty table under its headings reads as still loading.
+        if !w.tickers[venue].is_empty() || !w.known[venue].is_empty() {
+            ui.label_colored(&format!("No symbol has \"{}\" in it", w.search.trim()), muted);
+        }
+        return;
+    }
     let shown = if searching {
         (!rows.is_empty()).then(|| w.pick.min(rows.len() - 1))
     } else {
