@@ -31,7 +31,7 @@ pub use builtin::{
 };
 pub use candles::{Candle, CandleView, Candles, OutOfOrder};
 pub use candlestick::{CandleStyle, emit_candles};
-pub use chart::{Chart, ChartStyle, Event, Key};
+pub use chart::{Chart, ChartStyle, Event, Key, Look};
 pub use cursor::Cursor;
 pub use panes::{PaneStack, ScaleSetting};
 pub use plugin::{

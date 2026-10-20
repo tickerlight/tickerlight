@@ -19,7 +19,8 @@ use tickerlight_core::builtin::{
 use tickerlight_core::calendar::{DateTime, Zone};
 use tickerlight_core::plugin::{names, order};
 use tickerlight_core::{
-    Candles, Chart, Event, Footprint, Key, Scene, Surface, Time, Trade, Trades, VolumeProfile, native_step, span_label,
+    Candles, Chart, ChartStyle, Event, Footprint, Key, Look, Scene, Surface, Time, Trade, Trades, VolumeProfile,
+    native_step, span_label,
 };
 use tickerlight_deribit::Deribit;
 use tickerlight_dukascopy::Dukascopy;
@@ -32,7 +33,7 @@ use tickerlight_ui::panels::{
     ToolsPanel, TradesPanel,
 };
 use tickerlight_ui::{
-    Dock, Icon, IndicatorsPanel, Layout, Panel, SEARCH_INDICATORS, StrategyFiles, StrategyPanel, Ui, Workspace,
+    Dock, Icon, IndicatorsPanel, Layout, Panel, SEARCH_INDICATORS, StrategyFiles, StrategyPanel, Theme, Ui, Workspace,
 };
 
 use crate::flow::Chunk;
@@ -480,6 +481,8 @@ pub struct Program {
     pub layout: Layout,
     /// The clock every chart shows its times on.
     pub zone: Zone,
+    /// The colors of the window: dark or light.
+    pub look: Look,
     /// The journal columns, the same in every session (`journal.txt`), and as typed on the sessions page.
     pub columns: JournalColumns,
     pub columns_text: String,
@@ -696,8 +699,10 @@ fn page_strip(ui: &mut Ui, _: &mut Chart, p: &mut Program) {
 
 /// What the menu of the layouts is found by.
 pub const LAYOUTS: &str = "Layout";
+/// What the menu of the looks is found by.
+pub const LOOKS: &str = "Look";
 
-/// The indicators page's button, and the layouts of the charts.
+/// The indicators page's button, the layouts of the charts and the look.
 fn page_panel(ui: &mut Ui, _: &mut Chart, p: &mut Program) {
     let on = p.page == Some(Page::Indicators);
     if ui.toggle("Indicators", on) {
@@ -714,6 +719,16 @@ fn page_panel(ui: &mut Ui, _: &mut Chart, p: &mut Program) {
         p.layout = Layout::ALL[pick];
     }
     ui.tip("Layout: how many charts the window shows, and how they are placed");
+    let look_icon = |look| match look {
+        Look::Dark => Icon::Moon,
+        Look::Light => Icon::Sun,
+    };
+    let at = Look::ALL.iter().position(|&l| l == p.look).unwrap_or(0);
+    let (names, icons) = (Look::ALL.map(Look::label), Look::ALL.map(look_icon));
+    if let Some(pick) = ui.icon_menu(look_icon(p.look), LOOKS, Some(at), &names, &icons) {
+        p.look = Look::ALL[pick];
+    }
+    ui.tip("Look: the window dark or light");
 }
 
 /// The strategies to choose from. One's own goes here: a type that implements [`Strategy`]; or, with no rebuild,
@@ -968,6 +983,7 @@ impl Window {
             watch: Watchlist::load(&source.root),
             layout: Layout::One,
             zone: Zone::Utc,
+            look: Look::Dark,
             columns_text: columns.to_text("; "),
             columns: columns.clone(),
             snapshots: None,
@@ -1073,6 +1089,7 @@ impl Window {
             });
         }
         let zone = resume.as_ref().map_or(Zone::Utc, |r| r.zone);
+        let look = resume.as_ref().map_or(Look::Dark, |r| r.look);
         let layout = resume.map_or(Layout::One, |r| r.layout);
         charts.truncate(layout.cells());
         let first = charts.remove(0);
@@ -1082,6 +1099,8 @@ impl Window {
         window.activate(active.min(layout.cells() - 1));
         window.workspace.ctx.zone = zone;
         window.show_zone();
+        window.workspace.ctx.look = look;
+        window.show_look();
         window
     }
 
@@ -1110,6 +1129,23 @@ impl Window {
                 resources.insert(zone);
                 changed = true;
             }
+        }
+        changed
+    }
+
+    /// Puts the look chosen on every chart that has another, and on the controls; whether any had another.
+    fn show_look(&mut self) -> bool {
+        let look = self.workspace.ctx.look;
+        let mut changed = false;
+        for i in 0..self.workspace.charts() {
+            if self.workspace.chart_at(i).style.look != look {
+                self.workspace.chart_at_mut(i).style = ChartStyle::of(look);
+                changed = true;
+            }
+        }
+        if self.workspace.theme.look != look {
+            self.workspace.theme = Theme::from_chart(&ChartStyle::of(look));
+            changed = true;
         }
         changed
     }
@@ -1166,6 +1202,7 @@ impl Window {
             layout: self.workspace.layout(),
             active: self.workspace.active(),
             zone: self.workspace.ctx.zone,
+            look: self.workspace.ctx.look,
             charts,
         };
         let text = resume.to_text();
@@ -2597,8 +2634,9 @@ impl Surface for Window {
         self.snapshot_trades();
         self.save_drawings();
         self.save_studies();
-        // Charts that came since (a symbol, a layout) are shown on the clock chosen too.
+        // Charts that came since (a symbol, a layout) are shown on the clock and in the look chosen too.
         redraw |= self.show_zone();
+        redraw |= self.show_look();
         redraw |= self.sync_columns();
         self.save_resume();
         redraw |= self.sync_watchlist(event);
@@ -3430,6 +3468,64 @@ mod tests {
         click(&mut window, LAYOUTS);
         click(&mut window, "Two charts side by side");
         assert_eq!(zones(&window), [Some(Zone::NewYork); 2]);
+        std::fs::remove_dir_all(&source.root).unwrap();
+    }
+
+    #[test]
+    fn the_light_look_is_every_charts_and_the_controls_and_comes_back() {
+        let source = source("look");
+        let (year, month) = sync::months_before(now(), 1);
+        let start = Period::Month { year, month }.start();
+        let candles: Vec<Candle> = (0..300)
+            .map(|i| Candle {
+                time: Time(start.0 + i * 60_000),
+                open: 10.0,
+                high: 11.0,
+                low: 9.0,
+                close: 10.5,
+                volume: 1.0,
+            })
+            .collect();
+        Store::new(&source.root)
+            .write(&series("ETHUSDT"), Period::Month { year, month }, &candles)
+            .unwrap();
+        let mut window = Window::resumed(source.clone(), Some(series("ETHUSDT")));
+        window.resize(1400.0, 800.0);
+        settle(&mut window);
+        window.build_scene(&mut Scene::new());
+        click(&mut window, LAYOUTS);
+        click(&mut window, "Two charts side by side");
+        settle(&mut window);
+        let (dark, light) = (ChartStyle::of(Look::Dark), ChartStyle::of(Look::Light));
+        assert_eq!(window.workspace().chart_at(1).style, dark);
+        click(&mut window, LOOKS);
+        click(&mut window, "Light");
+        let shown = |w: &Window| {
+            let w = w.workspace();
+            (
+                (0..w.charts()).map(|i| w.chart_at(i).style).collect::<Vec<_>>(),
+                w.theme,
+            )
+        };
+        assert_eq!(shown(&window), (vec![light; 2], Theme::from_chart(&light)));
+        assert_ne!(light.background, dark.background);
+        let mut scene = Scene::new();
+        window.build_scene(&mut scene);
+        assert_eq!(scene.background, Theme::from_chart(&light).canvas);
+        drop(window);
+
+        let mut window = Window::resumed(source.clone(), None);
+        settle(&mut window);
+        assert_eq!(
+            shown(&window),
+            (vec![light; 2], Theme::from_chart(&light)),
+            "kept for the next start"
+        );
+        window.resize(1400.0, 800.0);
+        window.build_scene(&mut Scene::new());
+        click(&mut window, LOOKS);
+        click(&mut window, "Dark");
+        assert_eq!(shown(&window), (vec![dark; 2], Theme::default()));
         std::fs::remove_dir_all(&source.root).unwrap();
     }
 

@@ -787,7 +787,7 @@ impl<'a> Ui<'a> {
         let ink = if enabled { ink } else { theme.muted };
         if let Some(scene) = &mut self.scene {
             let color = if enabled {
-                shade(base, i)
+                shade(base, i, theme.lit)
             } else {
                 Color { a: base.a / 2, ..base }
             };
@@ -868,7 +868,7 @@ impl<'a> Ui<'a> {
             held: dragging,
             clicked: false,
         };
-        scene.fill_rounded(left, y, width, h, h / 2.0, shade(theme.control_hover, hover));
+        scene.fill_rounded(left, y, width, h, h / 2.0, shade(theme.control_hover, hover, theme.lit));
         if let Some(at) = at {
             let x = x_of(at);
             scene.fill_rounded(x, y, left + width - x, h, h / 2.0, theme.field);
@@ -918,7 +918,7 @@ impl<'a> Ui<'a> {
                 (None, theme.text)
             };
             if let Some(fill) = fill {
-                let fill = shade(fill, i);
+                let fill = shade(fill, i, theme.lit);
                 scene.fill_rounded(area.x, area.y, area.w, area.h, radius, fill);
             }
             icons::draw(scene, icon, area, ink, theme.up, theme.down, self.scale);
@@ -945,7 +945,8 @@ impl<'a> Ui<'a> {
                 scene.stroke_rounded(area.x, area.y, area.w, area.h, radius + ring, ring, theme.text);
             }
             let s = area.shrink(inset);
-            scene.fill_rounded(s.x, s.y, s.w, s.h, radius, color);
+            // As the chart draws it.
+            scene.fill_rounded(s.x, s.y, s.w, s.h, radius, theme.look.paint(color));
         }
         i.clicked
     }
@@ -1031,7 +1032,7 @@ impl<'a> Ui<'a> {
                 };
                 if let Some(fill) = fill {
                     let s = segment.shrink(inset);
-                    scene.fill_rounded(s.x, s.y, s.w, s.h, radius, shade(fill, response));
+                    scene.fill_rounded(s.x, s.y, s.w, s.h, radius, shade(fill, response, theme.lit));
                 }
                 let (cx, cy) = segment.center();
                 scene.text(cx, cy, size, ink, Align::Center, *option);
@@ -1094,7 +1095,7 @@ impl<'a> Ui<'a> {
                 false => theme.control,
             };
             if fill.a > 0 {
-                scene.fill_rounded(area.x, area.y, area.w, area.h, radius, shade(fill, i));
+                scene.fill_rounded(area.x, area.y, area.w, area.h, radius, shade(fill, i, theme.lit));
             }
             let ink = if open || lit { theme.accent_text } else { theme.text };
             let size = self.scale * theme.font_size;
@@ -1322,7 +1323,7 @@ impl<'a> Ui<'a> {
                     (faded(theme.control_hover, i.glow), theme.text)
                 };
                 if fill.a > 0 {
-                    scene.fill_rounded(area.x, area.y, area.w, area.h, radius, shade(fill, i));
+                    scene.fill_rounded(area.x, area.y, area.w, area.h, radius, shade(fill, i, theme.lit));
                 }
                 if let Some(&icon) = menu.icons.get(n) {
                     let square = Area { w: area.h, ..area };
@@ -1796,12 +1797,12 @@ impl<'a> Ui<'a> {
     }
 }
 
-/// A control's color lightened as it lights up under the pointer and darkened while pressed.
-fn shade(base: Color, i: Interaction) -> Color {
+/// A control's color turned toward `lit` as it lights up under the pointer, and darkened while pressed.
+fn shade(base: Color, i: Interaction, lit: Color) -> Color {
     if i.held {
         mix(base, Color::rgb(0, 0, 0), 0.2)
     } else {
-        mix(base, Color::rgb(255, 255, 255), 0.12 * i.glow)
+        mix(base, lit, 0.12 * i.glow)
     }
 }
 

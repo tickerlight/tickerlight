@@ -367,6 +367,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     tour.click("Long position");
     tour.click_at(tour.chart_point(0.36, 0.66));
     tour.shot("position-outcome")?;
+    // The light look: the menu at the end of the bar, then the chart with its drawings and the trading page.
+    tour.click("Look");
+    tour.shot("look-menu")?;
+    tour.click("Light");
+    tour.shot("light-drawings")?;
+    tour.click("Look");
+    tour.click("Dark");
 
     // Typing a note with capitals.
     let fills = tour
@@ -509,6 +516,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     tour.type_text("14");
     tour.key(Key::Enter);
     tour.shot("indicators")?;
+    // The indicators in the light look, over the candles and in panes of their own.
+    tour.click("Look");
+    tour.click("Light");
+    tour.shot("light-indicators")?;
+    tour.click("Look");
+    tour.click("Dark");
     tour.event(Event::PointerMoved {
         x: tour.chart_point(0.4, 0.5).0,
         y: tour.chart_point(0.4, 0.5).1,

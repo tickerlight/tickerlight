@@ -14,7 +14,7 @@ use tickerlight_core::builtin::{
     Account, DEFAULT_BALANCE, Drawings, Exits, Fill, Order, OrderKind, Replay, ReplayStops, SeriesKind,
 };
 use tickerlight_core::calendar::{DateTime, Zone};
-use tickerlight_core::{Chart, Event, Time, TimeScale, native_step};
+use tickerlight_core::{Chart, Event, Look, Time, TimeScale, native_step};
 
 use tickerlight_ui::Layout;
 use tickerlight_ui::panels::{Journal, OrderSizing, SizeMode};
@@ -565,6 +565,8 @@ pub struct Resume {
     pub active: usize,
     /// The clock times are shown on.
     pub zone: Zone,
+    /// The colors of the window.
+    pub look: Look,
     /// At least one.
     pub charts: Vec<Resumed>,
 }
@@ -599,11 +601,12 @@ impl Resume {
 
     pub fn to_text(&self) -> String {
         let mut text = format!(
-            "{}\nlayout {}\nactive {}\nzone {}\n",
+            "{}\nlayout {}\nactive {}\nzone {}\nlook {}\n",
             Self::HEADER,
             self.layout.name(),
             self.active,
-            self.zone.name()
+            self.zone.name(),
+            self.look.name()
         );
         for chart in &self.charts {
             let Series {
@@ -623,13 +626,14 @@ impl Resume {
     }
 
     /// A `series` line begins each chart; one that cannot be read drops its chart. Without a `layout` it is one
-    /// chart, as before there were more; without a `zone`, UTC.
+    /// chart, as before there were more; without a `zone`, UTC; without a `look`, dark.
     fn from_text(text: &str) -> Option<Self> {
         let mut lines = text.lines();
         if lines.next()?.trim() != Self::HEADER {
             return None;
         }
         let (mut layout, mut active, mut zone, mut charts) = (Layout::One, 0, Zone::Utc, Vec::new());
+        let mut look = Look::Dark;
         // The chart the lines are about: `None` after a series that cannot be read.
         let mut current: Option<usize> = None;
         for line in lines {
@@ -638,6 +642,7 @@ impl Resume {
                 ("layout", name, _) => layout = Layout::from_name(name).unwrap_or(Layout::One),
                 ("active", i, _) => active = i.parse().unwrap_or(0),
                 ("zone", name, _) => zone = Zone::from_name(name).unwrap_or_default(),
+                ("look", name, _) => look = Look::from_name(name).unwrap_or_default(),
                 ("series", rest, _) => {
                     current = parse_series(rest).map(|series| {
                         charts.push(Resumed {
@@ -657,6 +662,7 @@ impl Resume {
             layout,
             active: active.min(charts.len() - 1),
             zone,
+            look,
             charts,
         })
     }
@@ -808,6 +814,7 @@ mod tests {
             layout: Layout::Columns,
             active: 1,
             zone: Zone::NewYork,
+            look: Look::Light,
             charts: vec![
                 chart.clone(),
                 Resumed {
@@ -819,7 +826,8 @@ mod tests {
         };
         resume.save(&root).unwrap();
         assert_eq!(Resume::load(&root), Some(resume.clone()));
-        // Written before there were several charts or a time zone: one, active, in UTC.
+        assert!(resume.to_text().contains("\nlook light\n"));
+        // Written before there were several charts, a time zone or a look: one, active, in UTC, dark.
         let s = series();
         let old = format!(
             "chart-resume 1\nseries {} {} {}\ntimeframe 900000\nsession 1700000000000\n",
@@ -832,6 +840,7 @@ mod tests {
             layout: Layout::One,
             active: 0,
             zone: Zone::Utc,
+            look: Look::Dark,
             charts: vec![chart],
         };
         assert_eq!(Resume::load(&root), Some(one));

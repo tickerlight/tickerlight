@@ -301,6 +301,19 @@ impl Scene {
         }
     }
 
+    /// Every color of the scene through `paint`: the data colors as the look draws them.
+    pub fn recolor(&mut self, paint: impl Fn(Color) -> Color) {
+        for r in &mut self.rects {
+            (r.color, r.to) = (paint(r.color), paint(r.to));
+        }
+        for l in &mut self.lines {
+            l.color = paint(l.color);
+        }
+        for t in &mut self.texts {
+            t.color = paint(t.color);
+        }
+    }
+
     /// Closes the current layer: everything added from now on is drawn above everything so far.
     /// The next layer starts unclipped.
     pub fn next_layer(&mut self) {

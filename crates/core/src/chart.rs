@@ -85,9 +85,56 @@ pub enum Key {
     CtrlDown,
 }
 
+/// The colors the chart and the controls take: dark graphite (the default) or light paper.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Look {
+    #[default]
+    Dark,
+    Light,
+}
+
+impl Look {
+    pub const ALL: [Look; 2] = [Look::Dark, Look::Light];
+
+    /// As it is written down.
+    pub fn name(self) -> &'static str {
+        match self {
+            Look::Dark => "dark",
+            Look::Light => "light",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|l| l.name() == name)
+    }
+
+    /// As the user reads it.
+    pub fn label(self) -> &'static str {
+        match self {
+            Look::Dark => "Dark",
+            Look::Light => "Light",
+        }
+    }
+
+    /// `color` as this look draws it. The palette is tuned for the dark graphite; on light paper each of its
+    /// colors gives way to a deeper one that reads on it, so drawings and indicators keep their colors as saved
+    /// and still show. Other colors stay as they are.
+    pub fn paint(self, color: Color) -> Color {
+        match self {
+            Look::Dark => color,
+            Look::Light => Color {
+                a: color.a,
+                ..crate::palette::on_paper(Color { a: 255, ..color })
+            },
+        }
+    }
+}
+
 /// Colors and sizes the built-in plugins draw with. Sizes are logical pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ChartStyle {
+    /// Which look the colors are of: the data colors are painted with it (see [`Look::paint`]).
+    pub look: Look,
     pub background: Color,
     pub grid: Color,
     pub axis: Color,
@@ -112,9 +159,53 @@ pub struct ChartStyle {
     pub price_margin: f64,
 }
 
+impl ChartStyle {
+    /// The colors of `look`, with the default sizes.
+    pub fn of(look: Look) -> Self {
+        let dark = Self::default();
+        match look {
+            Look::Dark => dark,
+            // Warm off-white paper; the chrome is warm grey ink at a few strengths and the data keeps the color.
+            Look::Light => Self {
+                look,
+                background: Color::rgb(251, 250, 247),
+                grid: Color::rgb(240, 237, 232),
+                axis: Color::rgb(222, 218, 211),
+                axis_text: Color::rgb(110, 105, 98),
+                crosshair: Color::rgb(150, 145, 138),
+                // Dark pills on the light chart, as the light pills on the dark one.
+                crosshair_label: Color::rgb(52, 50, 47),
+                crosshair_label_text: Color::rgb(248, 246, 242),
+                candle: CandleStyle {
+                    up: crate::palette::on_paper(crate::palette::JADE),
+                    down: crate::palette::on_paper(crate::palette::CORAL),
+                    ..dark.candle
+                },
+                hud_text: Color::rgb(33, 30, 26),
+                accent: crate::palette::on_paper(crate::palette::AMBER),
+                panel: Color {
+                    a: 240,
+                    ..Color::rgb(240, 237, 232)
+                },
+                panel_hover: Color {
+                    a: 245,
+                    ..Color::rgb(228, 224, 218)
+                },
+                ..dark
+            },
+        }
+    }
+
+    /// Text that reads on the data color `color` as this look draws it.
+    pub fn ink(&self, color: Color) -> Color {
+        self.look.paint(color).ink()
+    }
+}
+
 impl Default for ChartStyle {
     fn default() -> Self {
         Self {
+            look: Look::Dark,
             // Warm graphite that recedes behind the data, and one amber accent.
             background: Color::rgb(21, 23, 28),
             grid: Color::rgb(27, 30, 36),
@@ -949,6 +1040,11 @@ impl Chart {
                 }
                 scene.next_layer();
             }
+        }
+        // Drawings and indicators keep the palette's colors as saved; a light look draws them deeper.
+        if self.style.look != Look::Dark {
+            let look = self.style.look;
+            scene.recolor(|c| look.paint(c));
         }
     }
 }

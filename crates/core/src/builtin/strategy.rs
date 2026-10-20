@@ -1111,7 +1111,8 @@ impl Layer for StrategyLayer {
         }
         // Over the arrows, as more than one fill can be on the bar.
         for (at, text, color) in fresh {
-            super::drawings::tag(ctx, at, &[text], color, color.ink());
+            let ink = ctx.style.ink(color);
+            super::drawings::tag(ctx, at, &[text], color, ink);
         }
         // Its name and its lines' values at the bar under the pointer, or at the newest: a row of the legend, under
         // the indicators over the candles.

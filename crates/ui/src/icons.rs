@@ -49,6 +49,9 @@ pub enum Icon {
     Strategy,
     /// A book with lines: the journal of sessions.
     Journal,
+    /// The looks: light and dark.
+    Sun,
+    Moon,
 }
 
 /// Draws `icon` centered in `area`, on an 18 by 18 grid of logical pixels.
@@ -296,6 +299,20 @@ pub fn draw(scene: &mut Scene, icon: Icon, area: Area, color: Color, up: Color, 
             for y in [6.0, 9.0, 12.0] {
                 line(scene, 9.0, y, 12.5, y);
             }
+        }
+        Icon::Sun => {
+            let (x, y) = at(9.0, 9.0);
+            let r = 3.5 * unit;
+            scene.stroke_rounded(x - r, y - r, 2.0 * r, 2.0 * r, r, w, color);
+            for k in 0..8 {
+                let (s, c) = (k as f32 * PI / 4.0).sin_cos();
+                line(scene, 9.0 + 5.8 * c, 9.0 + 5.8 * s, 9.0 + 7.8 * c, 9.0 + 7.8 * s);
+            }
+        }
+        Icon::Moon => {
+            // A crescent: the edge of a disc, less where a smaller one up and to the right covers it.
+            arc(scene, 9.0, 9.0, 6.5, 0.2098, 4.5026);
+            arc(scene, 12.0, 6.0, 5.5, 0.9142, 3.7990);
         }
     }
 }

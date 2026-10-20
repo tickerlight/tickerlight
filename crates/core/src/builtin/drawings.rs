@@ -1861,7 +1861,7 @@ impl DrawingsLayer {
                         (cx, entry),
                         &[entry_text],
                         tint(ctx.style.crosshair_label, 235),
-                        text,
+                        ctx.style.crosshair_label_text,
                     );
                 }
             }
@@ -2017,7 +2017,7 @@ impl Layer for DrawingLabels {
                 plot_w + ctx.px(ctx.style.label_padding),
                 y,
                 font,
-                d.color.ink(),
+                ctx.style.ink(d.color),
                 Align::Left,
                 price_text(d.a.price, d.a.price),
             );

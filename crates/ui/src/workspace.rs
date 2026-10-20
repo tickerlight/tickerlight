@@ -720,7 +720,7 @@ impl<C> Workspace<C> {
                 if dock == Dock::Float && self.float_extent.is_some() {
                     let radius = self.theme.radius * self.scale;
                     scene.set_clip(Some(self.chart_area().clip()));
-                    shadow(scene, area, radius, self.scale);
+                    shadow(scene, area, radius, self.scale, self.theme.shadow);
                     scene.next_layer();
                     scene.set_clip(Some(area.clip()));
                     scene.fill_rounded(area.x, area.y, area.w, area.h, radius, self.theme.control);
@@ -799,7 +799,7 @@ impl<C> Workspace<C> {
         if let Some(scene) = scene.as_deref_mut() {
             let radius = self.theme.radius * self.scale;
             scene.set_clip(None);
-            shadow(scene, area, radius, self.scale);
+            shadow(scene, area, radius, self.scale, self.theme.shadow);
             scene.next_layer();
             scene.set_clip(Some(area.clip()));
             scene.fill_rounded(area.x, area.y, area.w, area.h, radius, self.theme.control);
@@ -846,7 +846,7 @@ impl<C> Workspace<C> {
         };
         scene.set_clip(None);
         let radius = px(self.theme.radius);
-        shadow(scene, Area { x, y, w, h }, radius, self.scale);
+        shadow(scene, Area { x, y, w, h }, radius, self.scale, self.theme.shadow);
         scene.fill_rounded(x, y, w, h, radius, self.theme.control_hover);
         let top = y + (h - row * lines.len() as f32) / 2.0;
         for (i, line) in lines.iter().enumerate() {
@@ -1109,8 +1109,8 @@ impl<C> Surface for Workspace<C> {
     }
 }
 
-/// A soft dark shadow under a box that floats over something, a little below it.
-fn shadow(scene: &mut Scene, area: Area, radius: f32, scale: f32) {
+/// A soft shadow of `color` under a box that floats over something, a little below it.
+fn shadow(scene: &mut Scene, area: Area, radius: f32, scale: f32, color: Color) {
     let spread = 10.0 * scale;
     scene.fill_soft(
         area.x - spread,
@@ -1119,10 +1119,7 @@ fn shadow(scene: &mut Scene, area: Area, radius: f32, scale: f32) {
         area.h + 2.0 * spread,
         radius + spread,
         1.5 * spread,
-        Color {
-            a: 150,
-            ..Color::rgb(0, 0, 0)
-        },
+        color,
     );
 }
 

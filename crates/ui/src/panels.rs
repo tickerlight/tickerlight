@@ -548,7 +548,8 @@ pub const PALETTE: [(Color, &str); 8] = [
     (palette::JADE, "Green"),
     (palette::CYAN, "Cyan"),
     (palette::VIOLET, "Purple"),
-    (palette::STONE, "White"),
+    // Light on the dark look, dark on the light one.
+    (palette::STONE, "Contrast"),
 ];
 
 pub const DELETE_DRAWING: &str = "Delete drawing";

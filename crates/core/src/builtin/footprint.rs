@@ -25,7 +25,6 @@ pub struct Footprint {
     pub imbalance: f64,
     pub buy: Color,
     pub sell: Color,
-    pub background: Color,
     pub name: &'static str,
 }
 
@@ -39,7 +38,6 @@ impl Footprint {
             imbalance: 3.0,
             buy: crate::CandleStyle::default().up,
             sell: crate::CandleStyle::default().down,
-            background: crate::ChartStyle::default().background,
             name: "footprint",
         }
     }
@@ -187,7 +185,7 @@ impl Layer for Footprint {
                 column_top,
                 2.0 * half - unit,
                 column_bottom - column_top,
-                self.background,
+                ctx.style.background,
             );
             for (&level, &[sell, buy]) in &levels {
                 let top = y((level + 1) as f64 * tick);
