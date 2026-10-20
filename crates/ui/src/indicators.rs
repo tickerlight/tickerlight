@@ -161,8 +161,9 @@ impl<C> Panel<C> for IndicatorsPanel {
             if !study.kind.lined() {
                 continue;
             }
+            // Two rows: the widths and the dashes side by side do not fit a narrow dock.
             ui.horizontal(|ui| {
-                ui.heading("Lines");
+                ui.heading("Width");
                 let names: Vec<String> = STUDY_WIDTHS.iter().map(|w| format!("{label} width {w}")).collect();
                 let names: Vec<&str> = names.iter().map(String::as_str).collect();
                 let icons = [Icon::Width(1), Icon::Width(2), Icon::Width(3), Icon::Width(4)];
@@ -170,7 +171,9 @@ impl<C> Panel<C> for IndicatorsPanel {
                 if ui.icon_choice(&mut at, &icons, &names) {
                     study.width = STUDY_WIDTHS[at];
                 }
-                ui.separator();
+            });
+            ui.horizontal(|ui| {
+                ui.heading("Style");
                 let dashes = [Dash::Solid, Dash::Dashed, Dash::Dotted];
                 let names = ["solid", "dashed", "dotted"].map(|d| format!("{label} {d}"));
                 let names = names.each_ref().map(String::as_str);
@@ -302,7 +305,7 @@ mod tests {
         add(&mut w, "Trading sessions");
         assert_eq!(labels(&w), ["Sessions"]);
         let rects = w.ui_state().rects();
-        assert!(!rects.iter().any(|(t, _)| t == "Lines" || t.starts_with("Color of")));
+        assert!(!rects.iter().any(|(t, _)| t == "Width" || t.starts_with("Color of")));
         click(&mut w, "Gradient");
         assert_eq!(studies(w.chart())[0].params[0], 2.0);
         click(&mut w, "Remove Sessions");
@@ -319,7 +322,7 @@ mod tests {
         assert_ne!(colors[0], colors[1], "two sessions in two colors");
         let rects = w.ui_state().rects();
         assert!(rects.iter().any(|(t, _)| t == "Color of Session New York 09:30-16:00"));
-        assert!(!rects.iter().any(|(t, _)| t == "Lines"));
+        assert!(!rects.iter().any(|(t, _)| t == "Width"));
         // The city from its dropdown: the second session's, then Tokyo in the list it opens.
         click(&mut w, "New York");
         click(&mut w, "Tokyo");
