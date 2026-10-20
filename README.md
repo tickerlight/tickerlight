@@ -46,8 +46,9 @@ Status: early.
 
 ## Run it
 
-Download the archive for your system from [Releases](https://github.com/tickerlight/tickerlight/releases),
-unpack it and run `tickerlight` (`tickerlight.exe` on Windows). The builds are not signed yet:
+Download the archive for your system from [Releases](https://github.com/tickerlight/tickerlight/releases)
+(on a Mac: `aarch64-apple-darwin` for Apple silicon, `x86_64-apple-darwin` for Intel), unpack it and run
+`tickerlight` (`tickerlight.exe` on Windows). The builds are not signed yet:
 
 - Windows: on "Windows protected your PC", click "More info", then "Run anyway".
 - macOS: run `xattr -d com.apple.quarantine tickerlight` in the unpacked folder once, or after the first refusal
