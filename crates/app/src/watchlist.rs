@@ -666,6 +666,10 @@ pub fn watchlist_panel(ui: &mut Ui, _: &mut Chart, p: &mut Program) {
     if field.changed {
         w.pick = 0;
     }
+    // Escape gives up the search: the list shows again.
+    if field.cancelled {
+        w.search.clear();
+    }
     if field.step != 0 {
         w.step(venue, field.step);
     }
