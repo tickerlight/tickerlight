@@ -47,9 +47,12 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
-          path: tickerlight-*.*
+          path: |
+            tickerlight-*.zip
+            tickerlight-*.tar.gz
 
-  # Made from the archives there are: a system whose runner never came is added later by running its job again.
+  # Made from the archives there are: a system whose runner never came is added later by running its job again,
+  # which uploads its archive to the same draft.
   release:
     needs: build
     if: ${{ !cancelled() }}
@@ -58,6 +61,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
-      - run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --title "Tickerlight $GITHUB_REF_NAME" tickerlight-*
+      - shell: bash
+        run: |
+          shopt -s nullglob
+          gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --draft --title "Tickerlight $GITHUB_REF_NAME"
+          gh release upload "$GITHUB_REF_NAME" --clobber tickerlight-*.zip tickerlight-*.tar.gz
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
