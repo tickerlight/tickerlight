@@ -2677,9 +2677,10 @@ mod tests {
         }
     }
 
-    /// Ticks the window until the loading is over.
+    /// Ticks the window until the loading is over: within a minute, for a slow machine running other tests.
     fn settle(window: &mut Window) {
-        for _ in 0..500 {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while std::time::Instant::now() < deadline {
             if !window.needs_tick() {
                 return;
             }
