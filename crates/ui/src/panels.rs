@@ -6,7 +6,8 @@ use std::hash::{BuildHasher, RandomState};
 
 use tickerlight_core::builtin::{
     Account, Anchor, Dash, Drawing, DrawingStyle, Drawings, Exits, ExitsTried, Fill, Order, OrderKind, Replay,
-    SeriesKind, Stats, TEXT_SIZES, Tool, can_trade, exits_tried, set_studies, size_down, size_up, studies,
+    SeriesKind, Stats, TEXT_SIZES, Tool, add_position, can_trade, exits_tried, set_studies, size_down, size_up,
+    studies,
 };
 use tickerlight_core::calendar::{Clock, DateTime, MS_PER_DAY, Zone, full_label, parse_time};
 use tickerlight_core::plugin::commands;
@@ -1742,10 +1743,7 @@ fn trade_stats<K: Ord>(fills: &[Fill], keys: impl Fn(Option<usize>, usize) -> Ve
                 by_key.entry(key).or_default().add(profit);
             }
         }
-        position += fill.qty;
-        if position.abs() < 1e-12 {
-            position = 0.0;
-        }
+        position = add_position(position, fill.qty);
         let after = position;
         if after == 0.0 {
             opener = None;
@@ -1762,10 +1760,7 @@ fn round_trip(fills: &[Fill], i: usize) -> std::ops::Range<usize> {
     let (mut position, mut start) = (0.0, 0);
     for (j, fill) in fills.iter().enumerate() {
         let before = position;
-        position += fill.qty;
-        if position.abs() < 1e-12 {
-            position = 0.0;
-        }
+        position = add_position(position, fill.qty);
         let turned = before != 0.0 && position != 0.0 && before.signum() != position.signum();
         if j >= i && (position == 0.0 || turned) && j > start {
             return start..j + 1;

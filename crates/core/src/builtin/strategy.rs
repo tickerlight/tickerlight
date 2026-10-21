@@ -791,10 +791,7 @@ pub fn open_entry(fills: &[Fill]) -> Option<(Time, bool)> {
     let mut entry = None;
     for fill in fills {
         let before = position;
-        position += fill.qty;
-        if position.abs() < 1e-12 {
-            position = 0.0;
-        }
+        position = super::trading::add_position(position, fill.qty);
         if position == 0.0 {
             entry = None;
         } else if before == 0.0 || before.signum() != position.signum() {
@@ -813,10 +810,7 @@ pub fn closed_trades(fills: &[Fill]) -> Vec<ClosedTrade> {
     let mut entry: Option<(Time, f64)> = None;
     for (fill, result) in fills.iter().zip(results) {
         let before = position;
-        position += fill.qty;
-        if position.abs() < 1e-12 {
-            position = 0.0;
-        }
+        position = super::trading::add_position(position, fill.qty);
         if let (Some((time, price)), Some(result)) = (entry, result) {
             trades.push(ClosedTrade {
                 long: before > 0.0,
@@ -1064,10 +1058,7 @@ impl Layer for StrategyLayer {
         let mut position = 0.0_f64;
         for fill in run.account.fills() {
             let before = position;
-            position += fill.qty;
-            if position.abs() < 1e-12 {
-                position = 0.0;
-            }
+            position = super::trading::add_position(position, fill.qty);
             let Some(i) = bar(fill.time).filter(|i| visible.contains(i)) else {
                 continue;
             };

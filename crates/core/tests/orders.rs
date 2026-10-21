@@ -1,29 +1,35 @@
 //! Pending orders (limit and stop) in the replay: placed at the pointer, filled by later bars only.
 
-use tickerlight_core::builtin::{Account, Exits, OrderKind};
+use tickerlight_core::builtin::{Account, Exits, Fill, Order, OrderKind, Replay, exits_tried};
 use tickerlight_core::{Candle, Candles, Chart, Event, Key, Scene, Time};
 
 const MINUTE: i64 = 60_000;
 
 /// Bar `i` has open and close `100 + i` and spans half a unit each way, so the market only rises.
 fn chart() -> Chart {
+    let mut chart = Chart::new(rising(&[]));
+    chart.resize(872.0, 528.0);
+    chart
+}
+
+/// A thousand rising bars as [`chart`]'s, but for the `(i, (open, high, low, close))` given.
+fn rising(but: &[(i64, (f64, f64, f64, f64))]) -> Candles {
     let mut candles = Candles::new();
     for i in 0..1000 {
         let p = 100.0 + i as f64;
+        let (open, high, low, close) = but.iter().find(|b| b.0 == i).map_or((p, p + 0.5, p - 0.5, p), |b| b.1);
         candles
             .push(Candle {
                 time: Time(i * MINUTE),
-                open: p,
-                high: p + 0.5,
-                low: p - 0.5,
-                close: p,
+                open,
+                high,
+                low,
+                close,
                 volume: 1.0,
             })
             .unwrap();
     }
-    let mut chart = Chart::new(candles);
-    chart.resize(872.0, 528.0);
-    chart
+    candles
 }
 
 fn account(chart: &Chart) -> &Account {
@@ -314,4 +320,118 @@ fn an_order_label_hides_the_axis_price_under_it() {
     assert!(!after.iter().any(|(t, ty)| *t == tick && *ty == y), "{after:?}");
     // The other ticks stay.
     assert!(after.iter().filter(|(t, _)| t.parse::<f64>().is_ok()).count() >= before.len() - 1);
+}
+
+/// The chart in a replay showing the first `shown` bars of `candles`.
+fn replay(candles: Candles, shown: i64) -> Chart {
+    let mut chart = Chart::new(candles);
+    chart.resize(872.0, 528.0);
+    let replay = chart.resources_mut().get_mut::<Replay>().unwrap();
+    replay.start_at = Some(Time(shown * MINUTE));
+    chart.handle(Event::Key(Key::Alt('P')));
+    assert_eq!(chart.seen().len(), shown as usize);
+    chart
+}
+
+fn account_mut(chart: &mut Chart) -> &mut Account {
+    chart.resources_mut().get_mut::<Account>().unwrap()
+}
+
+#[test]
+fn an_order_moved_into_the_bar_on_screen_waits_for_the_next() {
+    let mut c = replay(rising(&[]), 500);
+    let after = c.order_after().unwrap();
+    account_mut(&mut c).place(Order {
+        kind: OrderKind::Limit,
+        qty: 1.0,
+        price: 50.0,
+        after,
+        reduce_only: false,
+        exits: Exits::default(),
+        break_even: None,
+    });
+    c.handle(Event::Key(Key::SelectRight));
+    assert!(account(&c).fills().is_empty());
+    // Dragged just above the low of the bar the user has seen: that bar is past, the next ones only rise.
+    let low = c.seen().low()[500];
+    assert!(account_mut(&mut c).move_order(0, low + 0.01));
+    c.handle(Event::PointerMoved { x: 300.0, y: 100.0 });
+    c.handle(Event::Key(Key::SelectRight));
+    assert!(account(&c).fills().is_empty(), "{:?}", account(&c).fills());
+}
+
+#[test]
+fn a_stop_moved_to_break_even_does_not_fill_on_the_bar_that_moved_it() {
+    // Bar 500 reaches the trigger and falls back below the entry; bar 501 stays above it.
+    let but = [(500, (600.0, 602.0, 598.0, 601.0)), (501, (601.0, 603.0, 600.5, 602.0))];
+    let mut c = replay(rising(&but), 500);
+    let entered = Time(499 * MINUTE);
+    let exits = Exits {
+        take_profit: None,
+        stop_loss: Some(590.0),
+        break_even: Some(601.5),
+    };
+    account_mut(&mut c).fill(entered, 599.0, 1.0);
+    account_mut(&mut c).protect(entered, 1.0, exits);
+    c.handle(Event::Key(Key::SelectRight));
+    assert_eq!(account(&c).position(), 1.0);
+    c.handle(Event::Key(Key::SelectRight));
+    assert_eq!(account(&c).position(), 1.0, "{:?}", account(&c).fills());
+}
+
+#[test]
+fn two_entries_sized_by_risk_leave_no_dust_when_both_targets_fill() {
+    // Sizes of a coin at a tenth of a cent as risk sizing gives them (equity × risk / distance), the first pair
+    // whose sum less each is not zero in floats.
+    let sizes =
+        (1..2000).flat_map(|k| (1..50).map(move |j| (1.0 / (0.00001234 * k as f64), 1.0 / (0.00000777 * j as f64))));
+    let (a, b) = sizes
+        .map(|(a, b)| (a * 100.0, b * 100.0))
+        .find(|&(a, b)| a + b - a - b != 0.0)
+        .unwrap();
+    let mut account = Account::default();
+    let exits = Exits {
+        take_profit: Some(0.0011),
+        stop_loss: Some(0.0009),
+        break_even: None,
+    };
+    for qty in [a, b] {
+        account.fill(Time(0), 0.001, qty);
+        account.protect(Time(0), qty, exits);
+    }
+    account.match_bar(Time(1), 0.00105, 0.00112, 0.00104);
+    assert_eq!(account.position(), 0.0);
+    // A later fall meets no stop left behind.
+    account.match_bar(Time(2), 0.00095, 0.00096, 0.00085);
+    assert_eq!(account.stats().closed, 2);
+}
+
+#[test]
+fn a_trade_turned_by_a_bigger_fill_counts_at_its_own_size() {
+    let mut candles = Candles::new();
+    for (i, p) in [100.0, 99.4, 102.1, 96.0, 97.0, 100.5].into_iter().enumerate() {
+        let candle = Candle {
+            time: Time(i as i64),
+            open: p,
+            high: p,
+            low: p,
+            close: p,
+            volume: 1.0,
+        };
+        candles.push(candle).unwrap();
+    }
+    let fill = |time, price, qty| Fill {
+        time: Time(time),
+        price,
+        qty,
+        fee: 0.0,
+    };
+    // Long 1 at 100, sold 3 at 97 (out of the long at -3%, short 2), bought back 2 at 100.5.
+    let fills = [fill(0, 100.0, 1.0), fill(4, 97.0, -3.0), fill(5, 100.5, 2.0)];
+    let tried = exits_tried(&fills, candles.view());
+    assert!(
+        (tried.as_traded - (-0.03 - 3.5 / 97.0)).abs() < 1e-12,
+        "{}",
+        tried.as_traded
+    );
 }

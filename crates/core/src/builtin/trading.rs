@@ -417,8 +417,8 @@ impl Account {
         let exit_fee = fee * closed / qty.abs();
         self.open_fees -= entry_fees;
         self.realized += profit;
-        self.position += qty;
-        if self.position.abs() < 1e-12 {
+        self.position = add_position(self.position, qty);
+        if self.position == 0.0 {
             self.position = 0.0;
             self.average = 0.0;
             self.open_fees = 0.0;
@@ -598,11 +598,13 @@ pub fn exits_tried(fills: &[Fill], bars: CandleView<'_>) -> ExitsTried {
         let before = sim.position;
         let profit = sim.record(Fill { fee: 0.0, ..fill });
         let after = sim.position;
+        let closes = before != 0.0 && (after == 0.0 || after.signum() != before.signum());
         if let Some((_, size, made)) = &mut trip {
-            *size = size.max(after.abs());
+            if !closes {
+                *size = size.max(after.abs());
+            }
             *made += profit.unwrap_or(0.0);
         }
-        let closes = before != 0.0 && (after == 0.0 || after.signum() != before.signum());
         if closes && let Some((entry, size, made)) = trip.take() {
             out.trades += 1;
             out.as_traded += made / (entry.price * size);
@@ -668,6 +670,16 @@ fn try_exits(entry: &Fill, bars: CandleView<'_>, totals: &mut [f64]) {
 /// trades that come after they were placed.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Live(pub bool);
+
+/// `position` after a fill of `qty`: flat when what is left is float noise of the sizes added and taken.
+pub fn add_position(position: f64, qty: f64) -> f64 {
+    let after = position + qty;
+    if after.abs() <= 1e-9 * position.abs().max(qty.abs()) {
+        0.0
+    } else {
+        after
+    }
+}
 
 fn live(res: &Resources) -> bool {
     res.get::<Live>().is_some_and(|l| l.0)
@@ -797,7 +809,7 @@ impl TradingHandler {
             for (i, bar) in (first..len).map_while(|i| Some((i, ctx.base.get(i)?))) {
                 let trades = bar_trades(ctx.trades, time, i);
                 let filled = match self.newest {
-                    Some((t, done)) if t == bar.time && done > 0 => {
+                    Some((t, done)) if t == bar.time => {
                         account.match_trades(bar.time, trades.slice(done.min(trades.len())..trades.len()))
                     }
                     _ => account.match_tape(bar.time, bar.open, bar.high, bar.low, trades),

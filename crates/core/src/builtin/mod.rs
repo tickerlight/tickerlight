@@ -69,7 +69,7 @@ pub use toolbar::{
 pub(crate) use trading::order_after;
 pub use trading::{
     Account, DEFAULT_BALANCE, EXIT_SHARES, Exits, ExitsTried, Fill, Live, Order, OrderDragHandler, OrderKind, Stats,
-    TradingHandler, TradingLayer, TradingPlugin, TriedExit, can_trade, exits_tried, size_down, size_up,
+    TradingHandler, TradingLayer, TradingPlugin, TriedExit, add_position, can_trade, exits_tried, size_down, size_up,
 };
 pub use volume::{VolumeLayer, VolumePlugin};
 pub use volume_profile::VolumeProfile;
