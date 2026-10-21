@@ -606,6 +606,9 @@ impl StrategyPanel {
             jumped: None,
             last: None,
         });
+        // Watched at the usual bar spacing, whatever the zoom before ("All" shows a sliver): the replay then puts
+        // the start where a start from the screen would be, so the trade plays in view.
+        chart.handle(Event::Command(commands::VIEW_RESET));
         self.jump(chart, from);
     }
 

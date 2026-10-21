@@ -1367,7 +1367,14 @@ impl<C> Panel<C> for PositionPanel {
                 (OrderKind::Stop, false) => "Sell stop",
             };
             ui.columns(3, |ui| {
-                ui.label_colored(name, if buy { up } else { down });
+                // Exits are coloured as on the chart: a take profit up, a stop loss down, whatever the side.
+                let color = match (order.kind, order.reduce_only) {
+                    (OrderKind::Limit, true) => up,
+                    (OrderKind::Stop, true) => down,
+                    _ if buy => up,
+                    _ => down,
+                };
+                ui.label_colored(name, color);
                 let mut text = match self.editing.take() {
                     Some((at, text)) if at == i => text,
                     other => {

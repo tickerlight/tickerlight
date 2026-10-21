@@ -349,7 +349,8 @@ impl Chart {
     }
 
     /// Replaces the tape of trades, such as with the trades of the days now on screen. Bars of seconds, made of
-    /// it, keep the moment at the right edge where it was (the newest ones come into view when there were none).
+    /// it, keep the moment at the right edge where it was; when there were none, the first ones come in as on a
+    /// fresh chart, at the default spacing at the right edge, not at the zoom of the timeframe before.
     pub fn set_trades(&mut self, trades: Trades) {
         let anchor = anchor(&self.time, self.seen());
         self.trades = trades;
@@ -358,7 +359,11 @@ impl Chart {
             let view = view_of(&self.candles, &self.derived, self.cursor);
             match anchor {
                 Some(anchor) => restore(&mut self.time, view, anchor),
-                None => self.time.right = view.len() as f64 + DEFAULT_RIGHT_MARGIN_BARS,
+                None if !view.is_empty() => {
+                    self.time.bar_spacing = DEFAULT_BAR_SPACING * self.scale as f64;
+                    self.time.right = view.len() as f64 + DEFAULT_RIGHT_MARGIN_BARS;
+                }
+                None => {}
             }
             self.clamp();
         }
@@ -765,10 +770,10 @@ impl Chart {
         retime(
             &mut self.time,
             &mut self.derived,
-            &self.candles,
-            &self.trades,
+            (&self.candles, &self.trades),
             (self.cursor, self.moment),
             self.timeframe,
+            DEFAULT_BAR_SPACING * self.scale as f64,
         );
         self.clamp();
     }
@@ -927,10 +932,10 @@ impl Chart {
                 retime(
                     &mut self.time,
                     &mut self.derived,
-                    &self.candles,
-                    &self.trades,
+                    (&self.candles, &self.trades),
                     (self.cursor, self.moment),
                     self.timeframe,
+                    DEFAULT_BAR_SPACING * self.scale as f64,
                 );
             }
         }
@@ -1096,20 +1101,26 @@ fn restore(time: &mut TimeScale, view: CandleView<'_>, (at, room): (Time, f64)) 
 }
 
 /// Switches the shown candles to `timeframe` and moves the time scale so that the moment at its right
-/// edge stays there: the same bar (or the period that holds it), with the same room after it.
+/// edge stays there: the same bar (or the period that holds it), with the same room after it. Bars of seconds
+/// with no trades yet start as a fresh chart does (`spacing`, the default), so the first ones do not come in at
+/// the zoom of the timeframe before.
 fn retime(
     time: &mut TimeScale,
     derived: &mut Option<Resampled>,
-    candles: &Candles,
-    trades: &Trades,
+    (candles, trades): (&Candles, &Trades),
     replayed: Replayed,
     timeframe: Option<i64>,
+    spacing: f64,
 ) {
     let old = anchor(time, view_of(candles, derived, replayed.0));
     *derived = timeframe.map(Resampled::new);
     sync(derived, candles, trades, replayed);
-    if let Some(old) = old {
-        restore(time, view_of(candles, derived, replayed.0), old);
+    let view = view_of(candles, derived, replayed.0);
+    if view.is_empty() && derived.as_ref().is_some_and(Resampled::from_tape) {
+        time.bar_spacing = spacing;
+        time.right = DEFAULT_RIGHT_MARGIN_BARS;
+    } else if let Some(old) = old {
+        restore(time, view, old);
     }
 }
 

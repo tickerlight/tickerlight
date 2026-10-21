@@ -19,8 +19,8 @@ use tickerlight_core::builtin::{
 use tickerlight_core::calendar::{DateTime, Zone};
 use tickerlight_core::plugin::{names, order};
 use tickerlight_core::{
-    Apart, Candles, Chart, ChartStyle, Event, Footprint, Key, Look, Scene, Surface, Time, Trade, Trades, VolumeProfile,
-    native_step, span_label,
+    Apart, Candles, Chart, ChartStyle, Event, Footprint, Key, Look, Scene, Surface, Time, TimeScale, Trade, Trades,
+    VolumeProfile, native_step, span_label,
 };
 use tickerlight_deribit::Deribit;
 use tickerlight_dukascopy::Dukascopy;
@@ -67,6 +67,17 @@ const FOOTPRINT: &str = "footprint";
 const PROFILE: &str = "volume-profile";
 /// How much wider than the narrowest bars the footprint draws in are made when it is switched on.
 const FOOTPRINT_ZOOM: f32 = 1.5;
+
+/// The bar spacing before the footprint widened the bars, put back when it is switched off.
+struct SpacingBeforeFootprint(f64);
+
+/// Sets the bar spacing around the right edge: the room after the last of `len` bars stays as many pixels.
+fn respace(time: &mut TimeScale, len: usize, spacing: f64) {
+    let last = len as f64;
+    time.right = last + (time.right - last).max(0.0) * time.bar_spacing / spacing;
+    time.bar_spacing = spacing;
+}
+
 /// The keys the chart trades with (buy, sell, size, close, limit, stop, cancel), taken away in the program.
 const TRADING_KEYS: [char; 8] = ['b', 's', ']', '[', 'c', 'l', 't', 'x'];
 
@@ -1755,15 +1766,20 @@ impl Window {
                 let mut time = *chart.time_scale();
                 let wide = (plugin.min_bar_width * FOOTPRINT_ZOOM * chart.scale()) as f64;
                 if time.bar_spacing < wide {
-                    // The room after the last bar stays as many pixels as it was.
-                    let last = chart.seen().len() as f64;
-                    time.right = last + (time.right - last).max(0.0) * time.bar_spacing / wide;
-                    time.bar_spacing = wide;
+                    chart.resources_mut().insert(SpacingBeforeFootprint(time.bar_spacing));
+                    respace(&mut time, chart.seen().len(), wide);
                     chart.set_time_scale(time);
                 }
             } else {
                 chart.remove_layer(FOOTPRINT);
                 chart.add_layer(names::VOLUME, order::VOLUME, VolumeLayer::default());
+                // The zoom was for the footprint's numbers: without them the bars are as they were, so another
+                // timeframe does not open at a dozen huge candles.
+                if let Some(SpacingBeforeFootprint(spacing)) = chart.resources_mut().remove() {
+                    let mut time = *chart.time_scale();
+                    respace(&mut time, chart.seen().len(), spacing);
+                    chart.set_time_scale(time);
+                }
             }
             changed = true;
         }
@@ -1974,7 +1990,17 @@ impl Window {
             } else {
                 String::new()
             };
-            parts.push(format!("Loading the trades of {}{more}", short(chunk)));
+            // Bars of seconds exist only as far as the trades loaded: said, so a few bars are not taken for
+            // all there is.
+            let seconds = (chart.timeframe()).filter(|&span| native_step(chart.base()).is_some_and(|n| span < n));
+            match seconds {
+                Some(span) => parts.push(format!(
+                    "Building {} bars from the trades of {}{more}",
+                    span_label(span),
+                    short(chunk)
+                )),
+                None => parts.push(format!("Loading the trades of {}{more}", short(chunk))),
+            }
         }
         for (_, e) in self.flow.failed.iter().filter(|(c, _)| wanted.contains(c)) {
             let e = if blind {
@@ -3290,10 +3316,16 @@ mod tests {
         window.build_scene(&mut Scene::new());
         assert_eq!(window.workspace().chart().seen_trades().len(), 0);
 
+        let spacing = window.workspace().chart().time_scale().bar_spacing;
         click(&mut window, "Footprint");
         assert!(window.workspace().chart().layer_names().contains(&FOOTPRINT));
         // The bars were widened for the numbers; zoomed out again, both days are on screen.
         let footprint = Footprint::new(1.0).min_bar_width as f64;
+        assert!(window.workspace().chart().time_scale().bar_spacing >= footprint);
+        // Off, the bars are as they were, so another timeframe does not open at the footprint's zoom; on again.
+        click(&mut window, "Footprint");
+        assert_eq!(window.workspace().chart().time_scale().bar_spacing, spacing);
+        click(&mut window, "Footprint");
         assert!(window.workspace().chart().time_scale().bar_spacing >= footprint);
         let area = window.workspace().chart_area();
         let (x, y) = (area.x + area.w / 2.0, area.y + area.h / 2.0);
