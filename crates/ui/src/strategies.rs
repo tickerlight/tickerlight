@@ -957,7 +957,14 @@ impl StrategyPanel {
         }
 
         let (muted, up, down) = (ui.theme().muted, ui.theme().up, ui.theme().down);
-        let tint = |result: f64| if result >= 0.0 { up } else { down };
+        // What rounds to zero is neither a gain nor a loss.
+        let tint = |result: f64| match money(result).as_bytes()[0] {
+            b'+' => up,
+            b'-' => down,
+            _ => muted,
+        };
+        // A replay's walk sees only what the replay has shown: the bars still to come stay unseen.
+        let replaying = chart.resources().get::<Replay>().is_some_and(|r| r.active);
         match &self.walk {
             Some(walk) if !walk.finished() => {
                 let per = walk.runs_per_window();
@@ -980,7 +987,10 @@ impl StrategyPanel {
                     ui.again();
                     return;
                 }
-                ui.tip("Chooses the settings on each training window by their result there, then trades the window after it with them: how choosing settings so does on bars it did not see");
+                ui.tip("Fit on each training window, trade the next");
+                if replaying {
+                    ui.label_colored(&format!("On the {} bars shown so far", bars.len()), muted);
+                }
             }
         }
         let Some(walk) = &self.walk else {
@@ -1011,8 +1021,9 @@ impl StrategyPanel {
         let (trades, result) = (walk.windows.iter())
             .filter_map(|w| w.tested)
             .fold((0, 0.0), |(n, sum), (k, r)| (n + k, sum + r));
-        let together = format!("{}, {}", count_trades(trades), money(result));
-        ui.value("The tests together", &together, Some(tint(result)));
+        // Closed trades, as "How it did" counts them, but only those of the test windows.
+        let together = format!("{trades} closed, {}", money(result));
+        ui.value(IN_THE_TESTS, &together, Some(tint(result)));
         ui.label_colored("A window picked sets its settings", muted);
 
         if let Some(i) = picked {
@@ -1030,6 +1041,9 @@ impl StrategyPanel {
         }
     }
 }
+
+/// The walk's row of its test windows together.
+const IN_THE_TESTS: &str = "In the tests";
 
 const WALK_COLUMNS: [Column; 4] = [
     Column {
@@ -1221,7 +1235,7 @@ impl<C> Panel<C> for StrategyPanel {
             ui.value("Return", &percent_of(net, balance), tint(net));
         });
         ui.columns(2, |ui| {
-            ui.value("Trades", &stats.closed.to_string(), None);
+            ui.value("Closed trades", &stats.closed.to_string(), None);
             let win = stats.win_rate().map_or("-".into(), |w| format!("{:.0}%", w * 100.0));
             ui.value("Wins", &win, None);
         });
@@ -1747,7 +1761,7 @@ mod tests {
         // Done, it asks for no more frames (once the button under the pointer has lit up).
         w.handle(Event::Tick { dt: 1.0 });
         w.build_scene(&mut Scene::new());
-        assert!(!w.needs_tick() && has(&w, "The tests together"));
+        assert!(!w.needs_tick() && has(&w, IN_THE_TESTS));
         assert!(has(&w, "Moving average cross 10/30"));
 
         let walk = walk_over(&random_walk(2000));
@@ -1760,24 +1774,24 @@ mod tests {
         let name = format!("Moving average cross {}/{}", window.chosen[0], window.chosen[1]);
         assert!(has(&w, &name), "{name}");
         // The walk stays to pick another window from, until a setting is typed.
-        assert!(has(&w, "The tests together"));
+        assert!(has(&w, IN_THE_TESTS));
         // Its windows are bars of this timeframe: on another one they would be other bars.
         w.chart_mut().set_timeframe(Some(300_000));
         w.build_scene(&mut Scene::new());
-        assert!(has(&w, "Start walking") && !has(&w, "The tests together"));
+        assert!(has(&w, "Start walking") && !has(&w, IN_THE_TESTS));
         w.chart_mut().set_timeframe(None);
         click(&mut w, "Start walking");
         while has(&w, "Stop walking") {
             w.handle(Event::Tick { dt: 0.016 });
             w.build_scene(&mut Scene::new());
         }
-        assert!(has(&w, "The tests together"));
+        assert!(has(&w, IN_THE_TESTS));
         click(&mut w, "Fast");
         w.handle(Event::Key(Key::SelectAll));
         w.handle(Event::Key(Key::Char('7')));
         w.handle(Event::Key(Key::Enter));
         w.build_scene(&mut Scene::new());
-        assert!(has(&w, "Start walking") && !has(&w, "The tests together"));
+        assert!(has(&w, "Start walking") && !has(&w, IN_THE_TESTS));
     }
 
     #[test]
