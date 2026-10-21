@@ -2,8 +2,6 @@
 //! each with a SHA-256 checksum next to it. A month's file appears a few days after the month ends, a day's file
 //! the next day; anything newer comes from the API.
 
-use std::io::Read;
-
 use sha2::{Digest, Sha256};
 use tickerlight_core::{Candle, Time, Trade, calendar};
 
@@ -15,6 +13,11 @@ pub const DEFAULT_LISTING_BASE: &str = "https://s3-ap-northeast-1.amazonaws.com/
 
 /// The biggest file we accept. Monthly trade files of busy pairs run into gigabytes; candles are a few megabytes.
 const MAX_FILE: u64 = 4 << 30;
+/// The biggest CSV accepted out of a candle file: a month of 1m candles is about 6 MB.
+const MAX_KLINES_CSV: u64 = 64 << 20;
+/// The biggest CSV accepted out of a trade file: a day of BTCUSDT's trades is 30 to 100 MB. A month of a busy
+/// pair's can be more; the program asks for days.
+const MAX_TRADES_CSV: u64 = 2 << 30;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Market {
@@ -122,6 +125,7 @@ impl Archive {
     pub fn with_bases(base: impl Into<String>, listing: impl Into<String>) -> Self {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
+            .https_only(true)
             .timeout_global(Some(std::time::Duration::from_secs(300)))
             .build()
             .into();
@@ -246,7 +250,7 @@ impl Archive {
         interval: Interval,
         period: Period,
     ) -> Result<Option<Vec<Candle>>, Error> {
-        match self.file(&self.klines_url(market, symbol, interval, period))? {
+        match self.file(&self.klines_url(market, symbol, interval, period), MAX_KLINES_CSV)? {
             Some(csv) => parse::archive_klines(&csv).map(Some),
             None => Ok(None),
         }
@@ -255,14 +259,15 @@ impl Archive {
     /// The trades of one file (a day's is a few megabytes for a busy pair), oldest first, or `None` when the
     /// archive has no such file.
     pub fn agg_trades(&self, market: Market, symbol: &str, period: Period) -> Result<Option<Vec<Trade>>, Error> {
-        match self.file(&self.agg_trades_url(market, symbol, period))? {
+        match self.file(&self.agg_trades_url(market, symbol, period), MAX_TRADES_CSV)? {
             Some(csv) => parse::archive_agg_trades(&csv).map(Some),
             None => Ok(None),
         }
     }
 
-    /// The text inside a zip file, checked against its checksum; `None` when there is no such file.
-    fn file(&self, url: &str) -> Result<Option<String>, Error> {
+    /// The text inside a zip file, checked against its checksum, of at most `cap` bytes; `None` when there is no
+    /// such file.
+    fn file(&self, url: &str, cap: u64) -> Result<Option<String>, Error> {
         let Some(zip) = self.fetch(url)? else {
             return Ok(None);
         };
@@ -270,7 +275,7 @@ impl Archive {
             .fetch(&format!("{url}.CHECKSUM"))?
             .ok_or_else(|| Error::Parse(format!("no checksum for {url}")))?;
         verify(&zip, &checksum)?;
-        unzip_single(&zip).map(Some)
+        unzip_single(&zip, cap).map(Some)
     }
 
     fn fetch(&self, url: &str) -> Result<Option<Vec<u8>>, Error> {
@@ -282,11 +287,7 @@ impl Archive {
         if !status.is_success() {
             return Err(Error::Http(format!("status {status} for {url}")));
         }
-        let body = response
-            .body_mut()
-            .with_config()
-            .limit(MAX_FILE)
-            .read_to_vec()
+        let body = tickerlight_core::read_capped(response.body_mut().as_reader(), MAX_FILE)
             .map_err(|e| Error::Http(e.to_string()))?;
         Ok(Some(body))
     }
@@ -318,14 +319,18 @@ pub fn verify(data: &[u8], checksum_file: &[u8]) -> Result<(), Error> {
     }
 }
 
-/// The text of the only file inside an archive's zip.
-pub fn unzip_single(data: &[u8]) -> Result<String, Error> {
+/// The text of the only file inside an archive's zip, refused when it is over `cap` bytes: the size the zip gives
+/// is checked first, and the reading stops past it all the same (the zip may lie).
+pub fn unzip_single(data: &[u8], cap: u64) -> Result<String, Error> {
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(data)).map_err(|e| Error::Parse(e.to_string()))?;
-    let mut file = zip.by_index(0).map_err(|e| Error::Parse(e.to_string()))?;
-    let mut text = String::new();
-    file.read_to_string(&mut text)
-        .map_err(|e| Error::Parse(e.to_string()))?;
-    Ok(text)
+    let file = zip.by_index(0).map_err(|e| Error::Parse(e.to_string()))?;
+    if file.size() > cap {
+        return Err(Error::Parse(format!(
+            "the file in the zip is {} bytes, more than {cap}",
+            file.size()
+        )));
+    }
+    tickerlight_core::read_capped_text(file, cap).map_err(|e| Error::Parse(e.to_string()))
 }
 
 #[cfg(test)]
@@ -419,7 +424,8 @@ mod tests {
         writer.start_file("BTCUSDT-1m-2026-10-16.csv", options).unwrap();
         writer.write_all(b"1,2,3\n").unwrap();
         writer.finish().unwrap();
-        assert_eq!(unzip_single(buffer.get_ref()).unwrap(), "1,2,3\n");
-        assert!(unzip_single(b"not a zip").is_err());
+        assert_eq!(unzip_single(buffer.get_ref(), 6).unwrap(), "1,2,3\n");
+        assert!(unzip_single(buffer.get_ref(), 5).is_err(), "more than the cap");
+        assert!(unzip_single(b"not a zip", 6).is_err());
     }
 }

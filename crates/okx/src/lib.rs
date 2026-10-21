@@ -12,7 +12,6 @@ mod live;
 pub use live::{LiveCandles, LivePrices, LiveTrades};
 
 use std::collections::HashMap;
-use std::io::Read;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -26,6 +25,12 @@ pub const DAY_START: i64 = -8 * 3_600_000;
 
 /// The biggest archive file we accept: a day of all the trades of a busy swap is tens of megabytes.
 const MAX_FILE: u64 = 1 << 30;
+/// The biggest CSV accepted out of a candle file: a month of 1m candles is a few megabytes.
+const MAX_CANDLES_CSV: u64 = 64 << 20;
+/// The biggest CSV accepted out of a trade file: a day of a busy swap's trades is a few hundred megabytes.
+const MAX_TRADES_CSV: u64 = 2 << 30;
+/// The biggest answer of the API accepted, decompressed: the tickers of every symbol are well under a megabyte.
+const MAX_ANSWER: u64 = 1 << 28;
 /// Rows a page of the history endpoints gives at most.
 const PAGE: usize = 100;
 /// How often a request refused for going too fast is tried again, a second apart.
@@ -177,6 +182,7 @@ impl Okx {
     pub fn with_bases(market: Market, base: impl Into<String>, archive: impl Into<String>) -> Self {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
+            .https_only(true)
             .timeout_global(Some(Duration::from_secs(300)))
             .build()
             .into();
@@ -203,9 +209,7 @@ impl Okx {
         for _ in 0..RETRIES {
             let mut response = self.agent.get(&url).call().map_err(|e| Error::Http(e.to_string()))?;
             let status = response.status();
-            let body = response
-                .body_mut()
-                .read_to_string()
+            let body = tickerlight_core::read_capped_text(response.body_mut().as_reader(), MAX_ANSWER)
                 .map_err(|e| Error::Http(e.to_string()))?;
             let too_fast = status == 429 || body.contains("\"code\":\"50011\"");
             if too_fast {
@@ -374,7 +378,7 @@ impl Okx {
         month: u32,
         day: Option<u32>,
     ) -> Result<Option<Vec<Candle>>, Error> {
-        match self.file(&self.candles_url(symbol, year, month, day))? {
+        match self.file(&self.candles_url(symbol, year, month, day), MAX_CANDLES_CSV)? {
             Some(csv) => parse::archive_candles(&csv, self.market).map(Some),
             None => Ok(None),
         }
@@ -383,14 +387,14 @@ impl Okx {
     /// Every trade of a day of the archive, oldest first, or `None` when it has no such file.
     pub fn archive_trades(&self, symbol: &str, day: Day) -> Result<Option<Vec<Trade>>, Error> {
         let contract = self.contract(symbol)?;
-        match self.file(&self.trades_url(symbol, day))? {
+        match self.file(&self.trades_url(symbol, day), MAX_TRADES_CSV)? {
             Some(csv) => parse::archive_trades(&csv, contract).map(Some),
             None => Ok(None),
         }
     }
 
-    /// The text inside a zip of the archive; `None` when there is no such file.
-    fn file(&self, url: &str) -> Result<Option<String>, Error> {
+    /// The text inside a zip of the archive, of at most `cap` bytes; `None` when there is no such file.
+    fn file(&self, url: &str, cap: u64) -> Result<Option<String>, Error> {
         let mut response = self.agent.get(url).call().map_err(|e| Error::Http(e.to_string()))?;
         let status = response.status().as_u16();
         if status == 404 || status == 403 {
@@ -399,23 +403,25 @@ impl Okx {
         if !(200..300).contains(&status) {
             return Err(Error::Http(format!("status {status} for {url}")));
         }
-        let zip = response
-            .body_mut()
-            .with_config()
-            .limit(MAX_FILE)
-            .read_to_vec()
+        let zip = tickerlight_core::read_capped(response.body_mut().as_reader(), MAX_FILE)
             .map_err(|e| Error::Http(e.to_string()))?;
-        unzip_single(&zip).map(Some)
+        unzip_single(&zip, cap).map(Some)
     }
 }
 
-/// The text of the only file inside a zip. Read as bytes: the headers of older files are partly in Chinese, not
-/// in UTF-8.
-fn unzip_single(data: &[u8]) -> Result<String, Error> {
+/// The text of the only file inside a zip, refused when it is over `cap` bytes: the size the zip gives is checked
+/// first, and the reading stops past it all the same (the zip may lie). Read as bytes: the headers of older files
+/// are partly in Chinese, not in UTF-8.
+fn unzip_single(data: &[u8], cap: u64) -> Result<String, Error> {
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(data)).map_err(|e| Error::Parse(e.to_string()))?;
-    let mut file = zip.by_index(0).map_err(|e| Error::Parse(e.to_string()))?;
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes).map_err(|e| Error::Parse(e.to_string()))?;
+    let file = zip.by_index(0).map_err(|e| Error::Parse(e.to_string()))?;
+    if file.size() > cap {
+        return Err(Error::Parse(format!(
+            "the file in the zip is {} bytes, more than {cap}",
+            file.size()
+        )));
+    }
+    let bytes = tickerlight_core::read_capped(file, cap).map_err(|e| Error::Parse(e.to_string()))?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 

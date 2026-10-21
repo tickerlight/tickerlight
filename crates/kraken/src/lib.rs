@@ -39,6 +39,8 @@ const SPACING: Duration = Duration::from_millis(25);
 const PARALLEL: usize = 24;
 /// How often a request refused for going too fast, or failed on Kraken's side, is tried again, a second apart.
 const RETRIES: usize = 10;
+/// The biggest answer accepted, decompressed: a page of 2000 candles or of trades is well under a megabyte.
+const MAX_ANSWER: u64 = 1 << 28;
 
 #[derive(Debug)]
 pub enum Error {
@@ -132,6 +134,7 @@ impl Kraken {
     pub fn with_base(base: impl Into<String>) -> Self {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
+            .https_only(true)
             .timeout_global(Some(Duration::from_secs(60)))
             .build()
             .into();
@@ -163,7 +166,8 @@ impl Kraken {
             self.pace();
             let answer = self.agent.get(&url).call().and_then(|mut response| {
                 let status = response.status().as_u16();
-                Ok((status, response.body_mut().read_to_string()?))
+                let body = tickerlight_core::read_capped_text(response.body_mut().as_reader(), MAX_ANSWER)?;
+                Ok((status, body))
             });
             match answer {
                 Ok((status, _)) if status == 429 || status >= 500 => failure = format!("status {status} for {url}"),

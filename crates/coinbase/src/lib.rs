@@ -32,6 +32,9 @@ const RETRIES: usize = 10;
 /// Requests in flight at once: deep history takes Coinbase about a second to answer, so with the spacing ten go
 /// out before the first comes back.
 const PARALLEL: usize = 10;
+/// The biggest answer accepted, decompressed: a page of 1000 trades or every product's stats is well under a
+/// megabyte.
+const MAX_ANSWER: u64 = 1 << 28;
 
 #[derive(Debug)]
 pub enum Error {
@@ -143,6 +146,7 @@ impl Coinbase {
     pub fn with_base(base: impl Into<String>) -> Self {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
+            .https_only(true)
             .timeout_global(Some(Duration::from_secs(60)))
             .build()
             .into();
@@ -185,7 +189,7 @@ impl Coinbase {
                 }
             };
             let status = response.status().as_u16();
-            let body = match response.body_mut().read_to_string() {
+            let body = match tickerlight_core::read_capped_text(response.body_mut().as_reader(), MAX_ANSWER) {
                 Ok(body) => body,
                 Err(e) => {
                     failure = e.to_string();

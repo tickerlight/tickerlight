@@ -38,6 +38,8 @@ const SPACING: Duration = Duration::from_millis(80);
 const PARALLEL: usize = 8;
 /// How often a request refused for going too fast, or failed on Bitstamp's side, is tried again, a second apart.
 const RETRIES: usize = 10;
+/// The biggest answer accepted, decompressed: a day of a busy pair's trades is a few megabytes.
+const MAX_ANSWER: u64 = 1 << 28;
 
 #[derive(Debug)]
 pub enum Error {
@@ -123,6 +125,7 @@ impl Bitstamp {
     pub fn with_base(base: impl Into<String>) -> Self {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
+            .https_only(true)
             .timeout_global(Some(Duration::from_secs(120)))
             .build()
             .into();
@@ -152,10 +155,9 @@ impl Bitstamp {
         let mut failure = String::new();
         for _ in 0..RETRIES {
             self.pace();
-            // A day of a busy pair's trades is a few megabytes.
             let answer = self.agent.get(&url).call().and_then(|mut response| {
                 let status = response.status().as_u16();
-                let body = response.body_mut().with_config().limit(1 << 28).read_to_string()?;
+                let body = tickerlight_core::read_capped_text(response.body_mut().as_reader(), MAX_ANSWER)?;
                 Ok((status, body))
             });
             match answer {

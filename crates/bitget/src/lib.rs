@@ -10,7 +10,6 @@ mod live;
 #[cfg(not(target_arch = "wasm32"))]
 pub use live::{LiveCandles, LivePrices, LiveTrades};
 
-use std::io::Read;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -44,8 +43,10 @@ const TRADES_SPACING: Duration = Duration::from_millis(100);
 const PARALLEL: usize = 20;
 /// How often a request refused for going too fast, or failed on Bitget's side, is tried again, a second apart.
 const RETRIES: usize = 10;
-/// The biggest archive file we accept: a part is 100 000 trades, a few megabytes.
+/// The biggest answer or archive file we accept: a part is 100 000 trades, a few megabytes.
 const MAX_FILE: u64 = 1 << 30;
+/// The biggest CSV accepted out of a part of the archive: 100 000 trades are about 6 MB.
+const MAX_PART_CSV: u64 = 256 << 20;
 
 /// A Bitget market: spot, or USDT-margined perpetual futures. Both write symbols as `BTCUSDT`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -188,6 +189,7 @@ impl Bitget {
     pub fn with_bases(market: Market, base: impl Into<String>, archive: impl Into<String>) -> Self {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
+            .https_only(true)
             .timeout_global(Some(Duration::from_secs(300)))
             .build()
             .into();
@@ -225,7 +227,7 @@ impl Bitget {
             // A dropped connection is tried again like a refusal: Bitget drops some when many requests are open.
             let answer = self.agent.get(url).call().and_then(|mut response| {
                 let status = response.status().as_u16();
-                let body = response.body_mut().with_config().limit(MAX_FILE).read_to_vec()?;
+                let body = tickerlight_core::read_capped(response.body_mut().as_reader(), MAX_FILE)?;
                 Ok((status, body))
             });
             match answer {
@@ -386,18 +388,22 @@ impl Bitget {
         if !(200..300).contains(&status) {
             return Err(Error::Http(format!("status {status} for {url}")));
         }
-        unzip_single(&zip).map(Some)
+        unzip_single(&zip, MAX_PART_CSV).map(Some)
     }
 }
 
-/// The text of the only file inside a zip.
-fn unzip_single(data: &[u8]) -> Result<String, Error> {
+/// The text of the only file inside a zip, refused when it is over `cap` bytes: the size the zip gives is checked
+/// first, and the reading stops past it all the same (the zip may lie).
+fn unzip_single(data: &[u8], cap: u64) -> Result<String, Error> {
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(data)).map_err(|e| Error::Parse(e.to_string()))?;
-    let mut file = zip.by_index(0).map_err(|e| Error::Parse(e.to_string()))?;
-    let mut text = String::new();
-    file.read_to_string(&mut text)
-        .map_err(|e| Error::Parse(e.to_string()))?;
-    Ok(text)
+    let file = zip.by_index(0).map_err(|e| Error::Parse(e.to_string()))?;
+    if file.size() > cap {
+        return Err(Error::Parse(format!(
+            "the file in the zip is {} bytes, more than {cap}",
+            file.size()
+        )));
+    }
+    tickerlight_core::read_capped_text(file, cap).map_err(|e| Error::Parse(e.to_string()))
 }
 
 #[cfg(test)]

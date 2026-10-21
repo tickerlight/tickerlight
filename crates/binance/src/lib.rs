@@ -26,6 +26,8 @@ pub const DEFAULT_FUTURES_BASE: &str = "https://fapi.binance.com";
 
 /// Rows per request Binance allows for both endpoints.
 const PAGE: usize = 1000;
+/// The biggest answer of the API accepted, decompressed: the tickers of every symbol are a megabyte or so.
+const MAX_ANSWER: u64 = 1 << 28;
 
 #[derive(Debug)]
 pub enum Error {
@@ -177,14 +179,18 @@ impl Binance {
         Self::with_market_base(Market::Spot, base)
     }
 
+    /// The API at `base`. An `https` base is never left for plain `http` by a redirect (a local stand-in for tests
+    /// is `http`).
     pub fn with_market_base(market: Market, base: impl Into<String>) -> Self {
+        let base = base.into();
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
+            .https_only(base.starts_with("https://"))
             .timeout_global(Some(std::time::Duration::from_secs(30)))
             .build()
             .into();
         Self {
-            base: base.into().trim_end_matches('/').to_string(),
+            base: base.trim_end_matches('/').to_string(),
             market,
             agent,
         }
@@ -205,9 +211,7 @@ impl Binance {
         }
         let mut response = request.call().map_err(|e| Error::Http(e.to_string()))?;
         let status = response.status();
-        let body = response
-            .body_mut()
-            .read_to_string()
+        let body = tickerlight_core::read_capped_text(response.body_mut().as_reader(), MAX_ANSWER)
             .map_err(|e| Error::Http(e.to_string()))?;
         if !status.is_success() {
             return Err(parse::api_error(&body).unwrap_or_else(|| Error::Http(format!("status {status}"))));

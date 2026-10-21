@@ -13,7 +13,6 @@ mod live;
 pub use live::{LiveCandles, LivePrices, LiveTrades};
 
 use std::collections::HashMap;
-use std::io::Read;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -42,6 +41,10 @@ const PARALLEL: usize = 20;
 const RETRIES: usize = 10;
 /// The biggest archive file we accept: a day of the trades of a busy pair is a few megabytes.
 const MAX_FILE: u64 = 1 << 30;
+/// The biggest CSV accepted out of a trade file: a day of a busy pair's trades is tens of megabytes.
+const MAX_TRADES_CSV: u64 = 2 << 30;
+/// The biggest answer of the API accepted, decompressed: the tickers of every symbol are about a megabyte.
+const MAX_ANSWER: u64 = 1 << 28;
 
 /// A KuCoin market: spot, or perpetual futures (`XBTUSDTM`, quoted in USDT, USDC or, inverse, USD).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -209,6 +212,7 @@ impl Kucoin {
     pub fn with_bases(market: Market, base: impl Into<String>, archive: impl Into<String>) -> Self {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
+            .https_only(true)
             .timeout_global(Some(Duration::from_secs(300)))
             .build()
             .into();
@@ -251,11 +255,7 @@ impl Kucoin {
             };
             let mut response = call.map_err(|e| Error::Http(e.to_string()))?;
             let status = response.status().as_u16();
-            let body = response
-                .body_mut()
-                .with_config()
-                .limit(MAX_FILE)
-                .read_to_vec()
+            let body = tickerlight_core::read_capped(response.body_mut().as_reader(), MAX_ANSWER)
                 .map_err(|e| Error::Http(e.to_string()))?;
             if status == 429 || status >= 500 {
                 failure = format!("status {status} for {url}");
@@ -433,14 +433,14 @@ impl Kucoin {
     /// Every trade of a day of the archive, oldest first, or `None` when it has no such file.
     pub fn archive_trades(&self, symbol: &str, day: Day) -> Result<Option<Vec<Trade>>, Error> {
         let contract = self.contract(symbol)?;
-        match self.file(&self.trades_url(symbol, day))? {
+        match self.file(&self.trades_url(symbol, day), MAX_TRADES_CSV)? {
             Some(csv) => parse::archive_trades(&csv, contract).map(Some),
             None => Ok(None),
         }
     }
 
-    /// The text inside a zip of the archive; `None` when there is no such file.
-    fn file(&self, url: &str) -> Result<Option<String>, Error> {
+    /// The text inside a zip of the archive, of at most `cap` bytes; `None` when there is no such file.
+    fn file(&self, url: &str, cap: u64) -> Result<Option<String>, Error> {
         let mut response = self.agent.get(url).call().map_err(|e| Error::Http(e.to_string()))?;
         let status = response.status().as_u16();
         if status == 404 || status == 403 {
@@ -449,24 +449,24 @@ impl Kucoin {
         if !(200..300).contains(&status) {
             return Err(Error::Http(format!("status {status} for {url}")));
         }
-        let zip = response
-            .body_mut()
-            .with_config()
-            .limit(MAX_FILE)
-            .read_to_vec()
+        let zip = tickerlight_core::read_capped(response.body_mut().as_reader(), MAX_FILE)
             .map_err(|e| Error::Http(e.to_string()))?;
-        unzip_single(&zip).map(Some)
+        unzip_single(&zip, cap).map(Some)
     }
 }
 
-/// The text of the only file inside a zip.
-fn unzip_single(data: &[u8]) -> Result<String, Error> {
+/// The text of the only file inside a zip, refused when it is over `cap` bytes: the size the zip gives is checked
+/// first, and the reading stops past it all the same (the zip may lie).
+fn unzip_single(data: &[u8], cap: u64) -> Result<String, Error> {
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(data)).map_err(|e| Error::Parse(e.to_string()))?;
-    let mut file = zip.by_index(0).map_err(|e| Error::Parse(e.to_string()))?;
-    let mut text = String::new();
-    file.read_to_string(&mut text)
-        .map_err(|e| Error::Parse(e.to_string()))?;
-    Ok(text)
+    let file = zip.by_index(0).map_err(|e| Error::Parse(e.to_string()))?;
+    if file.size() > cap {
+        return Err(Error::Parse(format!(
+            "the file in the zip is {} bytes, more than {cap}",
+            file.size()
+        )));
+    }
+    tickerlight_core::read_capped_text(file, cap).map_err(|e| Error::Parse(e.to_string()))
 }
 
 #[cfg(test)]

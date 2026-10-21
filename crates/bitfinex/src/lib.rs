@@ -40,6 +40,8 @@ const TRADE_SPACING: Duration = Duration::from_secs(4);
 const PARALLEL: usize = 4;
 /// How often a request refused for going too fast, or failed on Bitfinex's side, is tried again.
 const RETRIES: usize = 10;
+/// The biggest answer accepted, decompressed: a page of 10 000 candles or trades is about a megabyte.
+const MAX_ANSWER: u64 = 1 << 28;
 
 #[derive(Debug)]
 pub enum Error {
@@ -167,6 +169,7 @@ impl Bitfinex {
     pub fn with_base(base: impl Into<String>) -> Self {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
+            .https_only(true)
             .timeout_global(Some(Duration::from_secs(120)))
             .build()
             .into();
@@ -185,7 +188,7 @@ impl Bitfinex {
             pace(spacing);
             let answer = self.agent.get(&url).call().and_then(|mut response| {
                 let status = response.status().as_u16();
-                let body = response.body_mut().with_config().limit(1 << 28).read_to_string()?;
+                let body = tickerlight_core::read_capped_text(response.body_mut().as_reader(), MAX_ANSWER)?;
                 Ok((status, body))
             });
             let wait = match answer {

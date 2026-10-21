@@ -12,7 +12,7 @@ mod live;
 #[cfg(not(target_arch = "wasm32"))]
 pub use live::LiveCandles;
 
-use std::io::Read;
+use std::io::Write;
 use std::time::Duration;
 
 use serde_json::Value;
@@ -26,7 +26,8 @@ pub const DEFAULT_INSTRUMENTS: &str = "https://freeserv.dukascopy.com/2.0/?path=
 const MS_PER_HOUR: i64 = 3_600_000;
 /// How often a request is tried before it counts as failed.
 const TRIES: u32 = 8;
-/// The biggest file accepted: an hour of ticks of a busy pair is well under a megabyte.
+/// The biggest file accepted, and the most a file may unpack to: an hour of ticks of a busy pair is well under a
+/// megabyte packed and a few unpacked, a day of minutes 1440 × 24 bytes.
 const MAX_FILE: u64 = 1 << 26;
 /// Hours of ticks [`Dukascopy::recent`] goes back at most: the day files cover what is older.
 const MAX_HOURS: i64 = 48;
@@ -115,13 +116,36 @@ pub fn symbol_of(text: &str) -> Option<String> {
 }
 
 fn unlzma(data: &[u8]) -> Result<Vec<u8>, Error> {
-    let mut out = Vec::new();
+    let mut out = Capped(Vec::new());
     // The datafeed has empty files for hours without ticks.
     if !data.is_empty() {
-        lzma_rs::lzma_decompress(&mut std::io::Cursor::new(data), &mut out)
+        // The memory limit keeps the dictionary a file asks for within what it may unpack to; the output is capped
+        // as it is written.
+        let options = lzma_rs::decompress::Options {
+            memlimit: Some(MAX_FILE as usize),
+            ..Default::default()
+        };
+        lzma_rs::lzma_decompress_with_options(&mut std::io::Cursor::new(data), &mut out, &options)
             .map_err(|e| Error::Parse(format!("LZMA: {e:?}")))?;
     }
-    Ok(out)
+    Ok(out.0)
+}
+
+/// What a file unpacks to, refusing to grow past [`MAX_FILE`].
+struct Capped(Vec<u8>);
+
+impl Write for Capped {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if (self.0.len() + buf.len()) as u64 > MAX_FILE {
+            return Err(std::io::Error::other(format!("unpacks to more than {MAX_FILE} bytes")));
+        }
+        self.0.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 fn be_u32(b: &[u8]) -> u32 {
@@ -212,6 +236,7 @@ impl Dukascopy {
     pub fn with_bases(base: impl Into<String>, instruments: impl Into<String>) -> Self {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
+            .https_only(true)
             .timeout_global(Some(Duration::from_secs(60)))
             .build()
             .into();
@@ -246,9 +271,8 @@ impl Dukascopy {
                 }
                 _ => return Err(Error::Http(format!("status {status} for {url}"))),
             }
-            let mut body = Vec::new();
-            match response.body_mut().as_reader().take(MAX_FILE).read_to_end(&mut body) {
-                Ok(_) => return Ok(Some(body)),
+            match tickerlight_core::read_capped(response.body_mut().as_reader(), MAX_FILE) {
+                Ok(body) => return Ok(Some(body)),
                 Err(e) => why = e.to_string(),
             }
         }
