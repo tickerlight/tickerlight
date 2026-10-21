@@ -1141,9 +1141,14 @@ impl<C> Panel<C> for StrategyPanel {
                 None => bars,
             };
             let csv = features_csv(bars);
-            if let Some(files) = &mut self.files {
-                self.written = Some((files.features)(&csv));
-            }
+            // The header alone is no data to train on: a file of it would only stand for a written one.
+            self.written = if bars.is_empty() {
+                Some(Err("no bars on the chart".into()))
+            } else if csv.lines().nth(1).is_none() {
+                Some(Err("too few bars to know all the numbers of one".into()))
+            } else {
+                self.files.as_mut().map(|files| (files.features)(&csv))
+            };
         }
         let Some(strategy) = self.strategies.get_mut(self.selected) else {
             ui.heading("No strategies");
@@ -1559,6 +1564,25 @@ mod tests {
         let seen = w.chart().seen();
         let before = seen.slice(0..1500);
         assert_eq!(*written.borrow(), features_csv(before));
+
+        // Too few bars for a row: no file of the header alone, and the page says why.
+        let wrote = std::rc::Rc::new(std::cell::Cell::new(false));
+        let set = wrote.clone();
+        let files = StrategyFiles {
+            folder: "/data/strategies".into(),
+            read: Box::new(|| (Vec::new(), Vec::new())),
+            features: Box::new(move |_| {
+                set.set(true);
+                Ok("/data/strategies/features.csv".into())
+            }),
+        };
+        let mut w = Workspace::new(Chart::new(random_walk(5)), ())
+            .with(Dock::Right, StrategyPanel::new(Vec::new()).with_files(files));
+        w.resize(1400.0, 1000.0);
+        w.build_scene(&mut Scene::new());
+        click(&mut w, "Write the bars for training");
+        assert!(!wrote.get());
+        assert!(has(&w, "Not written: too few bars to know all the numbers of one"));
     }
 
     fn click(w: &mut Workspace<()>, text: &str) {
