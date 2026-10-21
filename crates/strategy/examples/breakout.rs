@@ -5,9 +5,9 @@
 //! cp target/wasm32-unknown-unknown/release/examples/breakout.wasm <data>/strategies/
 //! ```
 //!
-//! Long when the close breaks over the highest high of the bars before, short when under the lowest low; the
-//! stop at the other side of the channel, the size risking a share of the equity there. Out when the close breaks
-//! the middle of the channel the other way.
+//! Long when the close breaks over the highest high of the bars before, short when under the lowest low, if the
+//! channel is wide enough; the stop at the other side of the channel, the size risking a share of the equity there
+//! (no more than the equity buys). Out when the close breaks the middle of the channel the other way.
 
 use tickerlight_strategy::{Ctx, Exits, Strategy};
 
@@ -15,7 +15,7 @@ use tickerlight_strategy::{Ctx, Exits, Strategy};
 struct Breakout;
 
 impl Strategy for Breakout {
-    const SETTINGS: &'static [(&'static str, f64)] = &[("Length", 20.0), ("Risk %", 1.0)];
+    const SETTINGS: &'static [(&'static str, f64)] = &[("Length", 20.0), ("Risk %", 1.0), ("Min width %", 1.0)];
 
     fn name(settings: &[f64]) -> String {
         format!("Channel breakout {}", settings[0])
@@ -35,21 +35,26 @@ impl Strategy for Breakout {
             ctx.close_position();
             return;
         }
-        if position != 0.0 || !upper.is_finite() || !lower.is_finite() {
+        // A channel narrower than this (on 1m bars, most are) puts the stop a few fees away: 0.1% a fill makes
+        // every trade cost 0.2% of what it trades, which the breakouts do not make back. No channel yet is NaN.
+        let wide = upper - lower >= close * ctx.setting(2) / 100.0;
+        if position != 0.0 || !wide {
             return;
         }
+        // The size that risks `risk` of the equity at the stop, but no more than the equity buys.
+        let most = ctx.equity() / close;
         if close > upper {
             let exits = Exits {
                 stop_loss: Some(lower),
                 take_profit: None,
             };
-            ctx.buy(ctx.risk_size(risk, close, lower), exits);
+            ctx.buy(ctx.risk_size(risk, close, lower).min(most), exits);
         } else if close < lower {
             let exits = Exits {
                 stop_loss: Some(upper),
                 take_profit: None,
             };
-            ctx.sell(ctx.risk_size(risk, close, upper), exits);
+            ctx.sell(ctx.risk_size(risk, close, upper).min(most), exits);
         }
     }
 }

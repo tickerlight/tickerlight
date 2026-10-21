@@ -32,7 +32,8 @@ The model takes a float tensor of shape `[1, 6]` (or `[n, 6]`), the columns in t
 output is the chance of a higher close (one number from 0 to 1) or the chances of a lower and of a higher one (two
 numbers, as a classifier's probabilities).
 
-With scikit-learn and skl2onnx:
+With scikit-learn and skl2onnx (`python -m pip install pandas scikit-learn skl2onnx`), run in the `strategies`
+folder, or with the path of `features.csv`:
 
 ```python
 import pandas as pd

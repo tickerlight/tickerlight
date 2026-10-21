@@ -102,8 +102,8 @@ impl Ctx {
     /// Line `column` of an indicator, `ago` bars back from this one (zero for this bar): the numbers the chart
     /// shows, NaN where there is none. `key` is its name in the program's files: "sma", "ema", "wma", "vwap",
     /// "bb", "dc", "rsi", "macd", "atr", "stoch", "obv", "cci", "mfi", "adx", "supertrend", "pivots", "vol",
-    /// "ichimoku", "sessions"; `params` its settings in the order the program lists them. An unknown key stops
-    /// the strategy with a message.
+    /// "ichimoku", "sessions", "session"; `params` its first three settings at most, in the order the program
+    /// lists them (one left out keeps its default). An unknown key stops the strategy with a message.
     pub fn indicator(&mut self, key: &str, params: &[f64], column: usize, ago: usize) -> f64 {
         let p = |i: usize| params.get(i).copied().unwrap_or(f64::NAN);
         host::indicator(key, [p(0), p(1), p(2)], column, ago)
@@ -163,7 +163,7 @@ impl Ctx {
     }
 
     /// The size that loses `risk` (0.01 for 1%) of the equity if the price goes from `entry` to `stop`; zero if
-    /// they are the same.
+    /// they are the same. No cap: on a narrow stop it can be many times the equity.
     pub fn risk_size(&self, risk: f64, entry: f64, stop: f64) -> f64 {
         let distance = (entry - stop).abs();
         if distance > 0.0 && distance.is_finite() {

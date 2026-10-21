@@ -223,10 +223,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     std::fs::create_dir_all(root.join("strategies"))?;
     std::fs::copy(wasm, root.join("strategies/breakout.wasm"))?;
+    let offline = !std::env::args().any(|a| a == "--online");
     let source = Source {
         root: root.clone(),
         months: 3,
-        offline: !std::env::args().any(|a| a == "--online"),
+        offline,
     };
     let series = Series {
         venue: Venue::Binance(Market::Spot),
@@ -249,12 +250,22 @@ fn main() -> Result<(), Box<dyn Error>> {
     tour.shot("loading-later")?;
     tour.settle(120);
     tour.shot("loaded")?;
+    // The rest needs bars: without them it would stop later, at a control a chart with no data does not show.
+    if tour.window.workspace().chart().seen().is_empty() {
+        std::fs::remove_dir_all(&root)?;
+        return Err(if offline {
+            "no BTCUSDT 1m cached in TICKERLIGHT_DATA_DIR: add --online to download it"
+        } else {
+            "BTCUSDT 1m did not load"
+        }
+        .into());
+    }
 
     // What a button does and its key, shown by it.
     let auto = tour.at(tickerlight_ui::panels::SCALE_AUTO);
     tour.event(Event::PointerMoved { x: auto.0, y: auto.1 });
     tour.shot("tip")?;
-    // A long one, at the right edge of the window.
+    // One with its key.
     let start = tour.at(tickerlight_ui::panels::REPLAY);
     tour.event(Event::PointerMoved { x: start.0, y: start.1 });
     tour.shot("tip-long")?;

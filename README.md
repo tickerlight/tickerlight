@@ -2,7 +2,7 @@
 
 **Free, local charting, replay and strategy platform.** See every tick. Never the next one.
 
-![A manual backtest: a long with take profit and stop loss, replayed bar by bar until the take profit fills](docs/images/replay.gif)
+![A manual backtest: a long with take profit and stop loss, replayed bar by bar until the take profit fills](https://raw.githubusercontent.com/tickerlight/tickerlight/main/docs/images/replay.gif)
 
 Tickerlight is a desktop program for charts, bar replay and strategies. It is free and open source, and it runs
 on your machine: the market data and everything you do stay there. It is built in Rust on its own charting
@@ -20,10 +20,10 @@ engine and drawn on the GPU. If it is of use to you, it can be [supported](#supp
 
 | | |
 | --- | --- |
-| ![A strategy's trades replayed one by one](docs/images/watching-a-strategy.png) | ![A test period kept apart and a walk forward](docs/images/test-and-walk-forward.png) |
+| ![A strategy's trades replayed one by one](https://raw.githubusercontent.com/tickerlight/tickerlight/main/docs/images/watching-a-strategy.png) | ![A test period kept apart and a walk forward](https://raw.githubusercontent.com/tickerlight/tickerlight/main/docs/images/test-and-walk-forward.png) |
 | Watching a strategy trade | A test period kept apart, a walk forward |
 
-![A strategy trading by itself on paper, its backtest beside it](docs/images/trading-on-paper.png)
+![A strategy trading by itself on paper, its backtest beside it](https://raw.githubusercontent.com/tickerlight/tickerlight/main/docs/images/trading-on-paper.png)
 
 ## What is in it
 
@@ -33,7 +33,7 @@ engine and drawn on the GPU. If it is of use to you, it can be [supported](#supp
 - 17 drawing tools (lines, rays, channel, rectangle, Fibonacci retracement, ranges, long and short positions,
   text notes) with styles, magnet, lock and undo.
 - 18 indicators: SMA, EMA, WMA, VWAP, Bollinger, Donchian, RSI, MACD, ATR, Stochastic, OBV, CCI, MFI, ADX,
-  SuperTrend, pivots, volume, Ichimoku; trading sessions.
+  SuperTrend, pivots, volume, Ichimoku; trading sessions and sessions of your own.
 - Order flow: footprint and volume profile from the trades, cut by the replay too.
 - Bar replay down to bars of seconds, replay stops, a trade journal with notes, tags and pictures, statistics and
   an equity curve, sessions kept between runs.
@@ -57,7 +57,10 @@ Download the archive for your system from [Releases](https://github.com/tickerli
   allow it in System Settings, Privacy & Security, "Open Anyway".
 
 A symbol can be given at the start (`tickerlight ETHUSDT --futures --months 3` opens the USD-M futures with three
-months of history); with none it opens where it was left, else BTCUSDT.
+months of history); with none it opens where it was left, else BTCUSDT. Other sources: `--okx`, `--coinbase`,
+`--kucoin`, `--bitget`, `--kraken`, `--bitstamp`, `--bitfinex`, `--deribit`, `--dukascopy`. The history is 12
+months unless `--months` says otherwise; `--offline` downloads nothing and shows what is already here.
+`tickerlight --help` lists the options and the data folder in use, `tickerlight --version` the version.
 
 From source, with [Rust](https://rustup.rs) (the version in `rust-toolchain.toml` is installed by `rustup` on
 the first build):
@@ -74,28 +77,31 @@ The data folder holds the downloaded history, the sessions, the drawings and the
 
 | System | Folder |
 | --- | --- |
-| Linux | `~/.local/share/tickerlight` |
+| Linux | `$XDG_DATA_HOME/tickerlight`, by default `~/.local/share/tickerlight` |
 | macOS | `~/Library/Application Support/tickerlight` |
 | Windows | `%APPDATA%\tickerlight` |
 
 `TICKERLIGHT_DATA_DIR` puts it elsewhere.
 
-In the program the panels do most things, and the tooltips say their keys. Over the chart, as on TradingView, a
+In the program the panels do most things, and the tooltips say their keys. On a Mac, Cmd works wherever Ctrl is
+named (macOS keeps Ctrl with the arrows for itself), and Option is Alt. Over the chart, as on TradingView, a
 letter starts a symbol search with it, a digit types a timeframe (`15`, `30s`, `4h`, Enter), `/` adds an
 indicator and `Alt+G` goes to a date. Replay: `Alt+Shift+P` starts it at the pointer, `Space` plays and pauses,
 `Shift+→` steps, `↑`/`↓` or `+`/`-` change the speed. Drawings: `Alt+T` trend line, `Alt+H` horizontal line,
 `Alt+J` horizontal ray, `Alt+V` vertical line, `Alt+C` cross, `Alt+F` Fibonacci, `Alt+Shift+R` rectangle, `Esc`
-cancel, `Delete` remove the selected, `Ctrl+Z`/`Ctrl+Shift+Z` undo/redo. View: `←`/`→` a bar, `Ctrl+↑`/`Ctrl+↓`
-zoom, `Ctrl+←`/`Ctrl+→` the first/newest bar, `Alt+R` (or a double click on the time axis) reset, `Alt+L` log
-scale, `Alt+P` percent scale. Drag to pan, wheel to zoom; drag or wheel on a price axis to scale it by hand
-(double-click it to autoscale again); drag a pane separator to resize. Touch: one finger drags, two fingers pinch
-to zoom. Trading is done from the order panel; drag an order line to move it.
+cancel, `Delete` remove the selected, the arrows move it, `Ctrl+C`/`Ctrl+X`/`Ctrl+V` copy, cut and paste,
+`Ctrl+Z`/`Ctrl+Shift+Z` (or `Ctrl+Y`) undo/redo. View: `←`/`→` a bar, `Ctrl+↑`/`Ctrl+↓` zoom, `Ctrl+←`/`Ctrl+→`
+the first/newest bar, `Alt+R` (or a double click on the time axis) reset, `Alt+L` log scale, `Alt+P` percent
+scale. Drag to pan, wheel to zoom; drag or wheel on a price axis to scale it by hand (double-click it to autoscale
+again); drag a pane separator to resize. Touch: one finger drags, two fingers pinch to zoom. Trading is done from
+the order panel; drag an order line to move it.
 
 ## Strategies and models
 
-- [Writing a strategy](docs/strategies.md): Rust built to WebAssembly, loaded from the data folder.
-- [Training a model elsewhere](docs/models.md): the bars written out as features, a model trained in Python and
-  exported to ONNX.
+- [Writing a strategy](https://github.com/tickerlight/tickerlight/blob/main/docs/strategies.md): Rust built to
+  WebAssembly, loaded from the data folder.
+- [Training a model elsewhere](https://github.com/tickerlight/tickerlight/blob/main/docs/models.md): the bars
+  written out as features, a model trained in Python and exported to ONNX.
 - In the program's own code: a strategy implements `Strategy` (`crates/core/src/builtin/strategy.rs`);
   `MovingAverageCross` and `RsiReversal` there are examples, and the program's list is `strategies()` in
   `crates/app/src/program.rs`.
@@ -116,9 +122,10 @@ to zoom. Trading is done from the order panel; drag an order line to move it.
 
 ```sh
 # Headless, as PNGs: a walk through the program; the window in use; the order flow
-TICKERLIGHT_DATA_DIR=... cargo run -p tickerlight-app --example tour -- out/
-TICKERLIGHT_DATA_DIR=... cargo run -p tickerlight-app --example panels -- out.png
-TICKERLIGHT_DATA_DIR=... cargo run -p tickerlight-app --example flow -- out.png
+# (they read the market data cached in the data folder given, see CONTRIBUTING.md)
+TICKERLIGHT_DATA_DIR=~/.local/share/tickerlight cargo run -p tickerlight-app --example tour -- out/
+TICKERLIGHT_DATA_DIR=~/.local/share/tickerlight cargo run -p tickerlight-app --example panels -- out.png
+TICKERLIGHT_DATA_DIR=~/.local/share/tickerlight cargo run -p tickerlight-app --example flow -- out.png
 # Random data in a window; PNGs of scripted sessions; frame times on 1M candles
 cargo run --release -p tickerlight-backend-wgpu --example window
 cargo run -p tickerlight-backend-wgpu --example snapshot -- out/
@@ -126,15 +133,15 @@ cargo run --release -p tickerlight-core --example bench
 cargo test --workspace
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) before sending a change.
+See [CONTRIBUTING.md](https://github.com/tickerlight/tickerlight/blob/main/CONTRIBUTING.md) before sending a change.
 
 A plugin adds layers (draw), handlers (react to input), resources (shared state), commands, keys and buttons.
-See [`crates/core/examples/plugin.rs`](crates/core/examples/plugin.rs): a complete one in 80 lines. Layers go to a
-pane (`add_layer_in(Panes::One("rsi"), ..)`) and get their own price scale there. Anything built in can be
-replaced by adding a layer or handler of the same name, or removed. A chart without the program's panels also
-trades by keys: `B`/`S` market buy/sell, `C` close, `L`/`T` limit/stop order at the pointer, `X` cancel orders,
-`]`/`[` the order size. Live data is a `Source` (`poll` on every tick); see `tickerlight-binance` for a WebSocket
-one.
+See [`crates/core/examples/plugin.rs`](https://github.com/tickerlight/tickerlight/blob/main/crates/core/examples/plugin.rs):
+a complete one in 100 lines. Layers go to a pane (`add_layer_in(Panes::One("rsi"), ..)`) and get their own price
+scale there. Anything built in can be replaced by adding a layer or handler of the same name, or removed. A chart
+without the program's panels also trades by keys: `B`/`S` market buy/sell, `C` close, `L`/`T` limit/stop order at
+the pointer, `X` cancel orders, `]`/`[` the order size. Live data is a `Source` (`poll` on every tick); see
+`tickerlight-binance` for a WebSocket one.
 
 ## Support
 

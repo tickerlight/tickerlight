@@ -6,23 +6,30 @@ issue first, so the work is not done twice or in a direction the program won't t
 
 ## Building and checking
 
-[Rust](https://rustup.rs) installs the version in `rust-toolchain.toml` by itself. Then:
+[Rust](https://rustup.rs) installs the version in `rust-toolchain.toml` (with the `wasm32-unknown-unknown` target)
+by itself. Then the program, and the checks CI runs:
 
 ```sh
 cargo run --release -p tickerlight-app
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy -p tickerlight-web --target wasm32-unknown-unknown -- -D warnings
+cargo clippy -p tickerlight-strategy --target wasm32-unknown-unknown --all-targets -- -D warnings
 cargo test --workspace
 ```
 
 The pixel tests draw offscreen and compare with the pictures in the repository. On a machine without a GPU they
-need a software Vulkan driver (Mesa's lavapipe: `mesa-vulkan-drivers` on Debian and Ubuntu).
+need a software Vulkan driver (Mesa's lavapipe: `mesa-vulkan-drivers libvulkan1` on Debian and Ubuntu, as CI
+installs).
 
-To see a change without a window, the tour writes every step of using the program as PNGs. Give it a scratch
-data folder, not the one you use:
+To see a change without a window, the tour writes every step of using the program as PNGs. It reads the market
+data cached in the data folder it is given and keeps everything else (sessions, drawings, settings) in a
+temporary folder it removes, so the folder you use is safe to give it. It needs the last three months of BTCUSDT
+1m there (a first start of the program downloads them); with an empty folder, `--online` downloads them:
 
 ```sh
-TICKERLIGHT_DATA_DIR=/tmp/tl-data cargo run -p tickerlight-app --example tour -- /tmp/tour/
+TICKERLIGHT_DATA_DIR=~/.local/share/tickerlight cargo run -p tickerlight-app --example tour -- /tmp/tour/
+TICKERLIGHT_DATA_DIR=/tmp/tl-data cargo run -p tickerlight-app --example tour -- /tmp/tour/ --online
 ```
 
 ## How the code is built
