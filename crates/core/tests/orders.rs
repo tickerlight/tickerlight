@@ -12,8 +12,11 @@ fn chart() -> Chart {
     chart
 }
 
-/// A thousand rising bars as [`chart`]'s, but for the `(i, (open, high, low, close))` given.
-fn rising(but: &[(i64, (f64, f64, f64, f64))]) -> Candles {
+/// Open, high, low and close.
+type Ohlc = (f64, f64, f64, f64);
+
+/// A thousand rising bars as [`chart`]'s, but for the `(i, ohlc)` given.
+fn rising(but: &[(i64, Ohlc)]) -> Candles {
     let mut candles = Candles::new();
     for i in 0..1000 {
         let p = 100.0 + i as f64;
@@ -196,8 +199,10 @@ fn a_stop_loss_and_a_take_profit_on_a_position_close_it_once_and_cancel_each_oth
     assert!(orders.iter().all(|o| o.reduce_only && o.qty < 0.0), "{orders:?}");
     let mut scene = Scene::new();
     c.build_scene(&mut scene);
-    assert!(scene.texts.iter().any(|t| t.text == "Take profit 1"));
-    assert!(scene.texts.iter().any(|t| t.text == "Stop loss 1"));
+    let color = |name: &str| scene.texts.iter().find(|t| t.text == name).map(|t| t.color);
+    // Both exits sell, but a take profit is a gain and a stop loss a loss, whatever the side.
+    assert_eq!(color("Take profit 1"), Some(c.style.candle.up));
+    assert_eq!(color("Stop loss 1"), Some(c.style.candle.down));
 
     for _ in 0..300 {
         c.handle(Event::Key(Key::SelectRight));
