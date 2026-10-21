@@ -850,7 +850,7 @@ fn zone_panel(ui: &mut Ui, _: &mut Chart, p: &mut Program) {
     if ui.dropdown(&mut zone, &Zone::ALL.map(Zone::label)) {
         p.zone = Zone::ALL[zone];
     }
-    ui.tip("The time zone times are shown in. Candles stay in UTC days");
+    ui.tip("Time zone; days stay UTC");
 }
 
 /// How loading goes, over the top of the chart.

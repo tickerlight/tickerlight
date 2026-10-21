@@ -1,12 +1,13 @@
 //! Tickerlight, the desktop program: a chart of one symbol with its panels (drawings, indicators, watchlist,
 //! strategy, replay and virtual trading), on data kept in a local cache that is brought up to date from public
-//! archives and APIs (Binance, OKX, Coinbase, Dukascopy).
+//! archives and APIs (Binance, OKX, Coinbase, KuCoin, Bitget, Kraken, Bitstamp, Bitfinex, Deribit, Dukascopy).
 //!
-//! tickerlight [SYMBOL] [--okx] [--futures] [--coinbase] [--dukascopy] [--months N] [--offline] [--snapshot FILE.png]
+//! `tickerlight --help` lists the options.
 //!
 //! Without a symbol it starts where it was left: the symbol, the timeframe and the session.
 
-// A release build on Windows opens no console window; a fatal error shows in a message box instead.
+// A release build on Windows opens no console window; a fatal error, the help and the version show in a message
+// box instead.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 use std::error::Error;
@@ -20,8 +21,6 @@ use tickerlight_core::{Scene, Surface};
 
 /// The folder of the program's data inside the system's data folder.
 const DATA_FOLDER: &str = "tickerlight";
-/// Where the data were kept before the program had its name: moved to [`DATA_FOLDER`] on the first start.
-const OLD_DATA_FOLDER: &str = "charts";
 /// Overrides where the data are kept.
 const DATA_ENV: &str = "TICKERLIGHT_DATA_DIR";
 const SNAPSHOT_SIZE: (u32, u32) = (1400, 800);
@@ -95,19 +94,70 @@ fn data_root() -> Result<PathBuf, String> {
         return Ok(PathBuf::from(dir));
     }
     let system = dirs::data_dir().ok_or_else(|| format!("no data folder on this system; set {DATA_ENV}"))?;
-    let (root, old) = (system.join(DATA_FOLDER), system.join(OLD_DATA_FOLDER));
-    // The folder of before is moved once; if it cannot be, the program goes on with it where it is.
-    if !root.exists() && old.is_dir() && std::fs::rename(&old, &root).is_err() {
-        return Ok(old);
-    }
-    Ok(root)
+    Ok(system.join(DATA_FOLDER))
 }
 
 fn main() {
+    if let Some(text) = asked() {
+        say(&text);
+        return;
+    }
     if let Err(e) = run() {
         fail(&format!("error: {e}"));
         std::process::exit(1);
     }
+}
+
+/// The help or the version, when the command line asks for one: shown instead of starting.
+fn asked() -> Option<String> {
+    let version = format!("tickerlight {}", env!("CARGO_PKG_VERSION"));
+    for arg in std::env::args().skip(1) {
+        match arg.as_str() {
+            "--version" | "-V" => return Some(version),
+            "--help" | "-h" => return Some(format!("{version}\n\n{}", help())),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn help() -> String {
+    let sources = (Venue::EXCHANGES[1..Venue::EXCHANGES.len() - 1].iter())
+        .map(|name| format!("--{}", name.to_ascii_lowercase()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let folder = match data_root() {
+        Ok(root) => root.display().to_string(),
+        Err(e) => e,
+    };
+    format!(
+        "Usage: tickerlight [SYMBOL] [OPTIONS]\n\
+         \n\
+         Without a symbol it opens where it was left, else BTCUSDT on Binance spot.\n\
+         \n\
+         Options:\n  \
+           {sources}\n      The source of SYMBOL (Binance by default)\n  \
+           --futures\n      The perpetual futures (USD-M on Binance)\n  \
+           --months N\n      Months of history to download (12)\n  \
+           --offline\n      Download nothing: only what is on this computer\n  \
+           --snapshot FILE.png\n      Draw the chart into a picture instead of opening a window\n  \
+           -h, --help\n      This help\n  \
+           -V, --version\n      The version\n\
+         \n\
+         Data folder: {folder}\n\
+         ({DATA_ENV} puts it elsewhere.)"
+    )
+}
+
+#[cfg(not(all(windows, not(debug_assertions))))]
+fn say(text: &str) {
+    println!("{text}");
+}
+
+// No console to print to: the message box the errors use, without the error icon.
+#[cfg(all(windows, not(debug_assertions)))]
+fn say(text: &str) {
+    message_box(text, windows_sys::Win32::UI::WindowsAndMessaging::MB_ICONINFORMATION);
 }
 
 #[cfg(not(windows))]
@@ -117,19 +167,17 @@ fn fail(text: &str) {
 
 #[cfg(windows)]
 fn fail(text: &str) {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
     eprintln!("{text}");
+    message_box(text, windows_sys::Win32::UI::WindowsAndMessaging::MB_ICONERROR);
+}
+
+#[cfg(windows)]
+fn message_box(text: &str, icon: windows_sys::Win32::UI::WindowsAndMessaging::MESSAGEBOX_STYLE) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{MB_OK, MessageBoxW};
     let wide = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
     let (text, title) = (wide(text), wide("Tickerlight"));
     // SAFETY: both strings are NUL-terminated UTF-16 that outlive the call; no owner window.
-    unsafe {
-        MessageBoxW(
-            std::ptr::null_mut(),
-            text.as_ptr(),
-            title.as_ptr(),
-            MB_OK | MB_ICONERROR,
-        )
-    };
+    unsafe { MessageBoxW(std::ptr::null_mut(), text.as_ptr(), title.as_ptr(), MB_OK | icon) };
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
