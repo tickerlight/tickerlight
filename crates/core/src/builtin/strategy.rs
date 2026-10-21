@@ -11,7 +11,7 @@ use super::equity::Equity;
 use super::studies::Cache;
 #[cfg(test)]
 use super::trading::DEFAULT_BALANCE;
-use super::trading::{Account, Exits, Fill, Order, OrderKind};
+use super::trading::{Account, Exits, Fill, Order, OrderKind, Stats};
 use super::{Kind, STUDY_COLORS, Study};
 use crate::plugin::{names, order};
 use crate::{Align, CandleView, Chart, Color, DrawCtx, Layer, Time, TradeView};
@@ -256,6 +256,8 @@ pub fn backtest_from(
     }
     StrategyRun {
         name: strategy.name(),
+        trades: closed_trades(account.fills()),
+        stats: account.stats(),
         account,
         plots: steps.plots,
         orders: book.lives,
@@ -678,6 +680,9 @@ pub struct StrategyRun {
     pub marked: Vec<Time>,
     /// The bars kept for testing it, at the end: shaded on the chart.
     pub test: Option<TestPeriod>,
+    /// The trades and stats of `account` as the run left it, worked out once rather than on every frame.
+    trades: Vec<ClosedTrade>,
+    stats: Stats,
 }
 
 /// The last bars, kept apart from choosing a strategy's settings to test it on what it was not fitted to.
@@ -697,6 +702,16 @@ pub struct Input {
 }
 
 impl StrategyRun {
+    /// Its trades, as [`closed_trades`] gives them for its fills.
+    pub fn trades(&self) -> &[ClosedTrade] {
+        &self.trades
+    }
+
+    /// How its fills went, as [`Account::stats`] gives it.
+    pub fn stats(&self) -> Stats {
+        self.stats
+    }
+
     /// The bar whose close decided the entry at `entry` (`long` or short), of the bars at `times` it ran over: where
     /// its entry order was placed, or the bar before a market entry's fill.
     pub fn decision(&self, entry: Time, long: bool, times: &[Time]) -> Option<usize> {
@@ -846,7 +861,7 @@ pub fn set_strategy_run(chart: &mut Chart, run: Option<StrategyRun>) {
         return;
     };
     chart.resources_mut().insert(run);
-    chart.add_layer(names::STRATEGY, order::STRATEGY, StrategyLayer);
+    chart.add_layer(names::STRATEGY, order::STRATEGY, StrategyLayer::default());
     if !chart.pane_names().contains(&names::STRATEGY_EQUITY) {
         chart.add_plugin(Equity {
             name: names::STRATEGY_EQUITY,
@@ -863,7 +878,80 @@ const SELL: Color = crate::palette::MAGENTA;
 
 /// The trades of a [`StrategyRun`]: an arrow at each fill, under the bar for a buy and over it for a sell, named
 /// when there is room, and a dotted line from where each trade went in to where it came out, green for a gain.
-struct StrategyLayer;
+#[derive(Default)]
+struct StrategyLayer {
+    placed: Placed,
+}
+
+/// Where the fills, trades and orders of a run fall on the bars: worked out once for a run and its bars rather
+/// than on every frame, and again when either changes.
+#[derive(Default)]
+struct Placed {
+    /// What it was worked out from: the fills, when the orders were placed and ended, the trades a change took
+    /// away, and the bars (how many, the times of the first two and the last).
+    fills: Vec<Fill>,
+    orders: Vec<(Time, Option<Time>)>,
+    gone: Vec<ClosedTrade>,
+    bars: (usize, [Option<Time>; 3]),
+    /// Of each fill on the bars: its place in the fills, its bar, and what it did to the position.
+    fill_bars: Vec<(usize, usize, &'static str)>,
+    /// Of each trade on the bars (by its place in [`StrategyRun::trades`]), and of each trade gone: its place and
+    /// the bars it went in and came out on.
+    trades: Vec<(usize, usize, usize)>,
+    ghosts: Vec<(usize, usize, usize)>,
+    /// Of each order placed on the bars: its place, the bar it was placed on and the one it ended on (the last
+    /// while it waits).
+    lives: Vec<(usize, usize, usize)>,
+}
+
+impl Placed {
+    fn update(&mut self, run: &StrategyRun, times: &[Time]) {
+        let fills = run.account.fills();
+        let gone = run.changes.as_ref().map_or(&[][..], |c| &c.gone[..]);
+        let bars = (
+            times.len(),
+            [times.first().copied(), times.get(1).copied(), times.last().copied()],
+        );
+        let orders = run.orders.iter().map(|life| (life.placed, life.ended));
+        if self.bars == bars && self.fills == fills && self.gone == gone && self.orders.iter().copied().eq(orders) {
+            return;
+        }
+        // The bar that holds a moment: on a higher timeframe that is a period, not a bar.
+        let bar = |t: Time| times.partition_point(|&x| x <= t).checked_sub(1);
+        let span = |(k, (entry, exit)): (usize, (Time, Time))| Some((k, bar(entry)?, bar(exit)?));
+        let mut position = 0.0_f64;
+        self.fill_bars = fills
+            .iter()
+            .enumerate()
+            .filter_map(|(k, fill)| {
+                let before = position;
+                position = super::trading::add_position(position, fill.qty);
+                let name = if position == 0.0 {
+                    "Close"
+                } else if before == 0.0 || before.signum() != position.signum() {
+                    if fill.qty > 0.0 { "Long" } else { "Short" }
+                } else if position.abs() > before.abs() {
+                    "Add"
+                } else {
+                    "Reduce"
+                };
+                Some((k, bar(fill.time)?, name))
+            })
+            .collect();
+        let times_of = |t: &ClosedTrade| (t.entry, t.exit);
+        self.trades = run.trades().iter().map(times_of).enumerate().filter_map(span).collect();
+        self.ghosts = gone.iter().map(times_of).enumerate().filter_map(span).collect();
+        let last = times.len().saturating_sub(1);
+        self.lives = run
+            .orders
+            .iter()
+            .enumerate()
+            .filter_map(|(k, life)| Some((k, bar(life.placed)?, life.ended.and_then(bar).unwrap_or(last))))
+            .collect();
+        (self.fills, self.gone, self.bars) = (fills.to_vec(), gone.to_vec(), bars);
+        self.orders = run.orders.iter().map(|life| (life.placed, life.ended)).collect();
+    }
+}
 
 impl Layer for StrategyLayer {
     fn draw(&mut self, ctx: &mut DrawCtx<'_>) {
@@ -881,6 +969,8 @@ impl Layer for StrategyLayer {
         let bar = |t: Time| times.partition_point(|&x| x <= t).checked_sub(1);
         let x_of = |i: usize| ctx.time.x_of(i as f64 + 0.5) as f32;
         let visible = ctx.visible.clone();
+        self.placed.update(run, times);
+        let placed = &self.placed;
 
         let around = visible.start.saturating_sub(1)..(visible.end + 1).min(view.len());
         let width = ctx.px(1.5);
@@ -924,10 +1014,8 @@ impl Layer for StrategyLayer {
         };
         let label = ctx.px(style.font_size * 0.85);
         let in_view = |from: usize, to: usize| from <= visible.end && to + 1 >= visible.start;
-        for trade in run.changes.iter().flat_map(|c| &c.gone) {
-            let (Some(from), Some(to)) = (bar(trade.entry), bar(trade.exit)) else {
-                continue;
-            };
+        for &(k, from, to) in &placed.ghosts {
+            let trade = &placed.gone[k];
             if !in_view(from, to) {
                 continue;
             }
@@ -941,10 +1029,9 @@ impl Layer for StrategyLayer {
             }
         }
 
-        for (k, trade) in closed_trades(run.account.fills()).iter().enumerate() {
-            let (Some(from), Some(to)) = (bar(trade.entry), bar(trade.exit)) else {
-                continue;
-            };
+        let trades = run.trades();
+        for &(k, from, to) in &placed.trades {
+            let trade = &trades[k];
             if !in_view(from, to) {
                 continue;
             }
@@ -1014,19 +1101,22 @@ impl Layer for StrategyLayer {
 
         // Its orders: a dashed line at the price from the bar it was placed on to the one it ended on (the last
         // bar while it waits, named), a cross where it was taken off.
-        let last = view.len() - 1;
-        for life in &run.orders {
-            let Some(from) = bar(life.placed) else {
-                continue;
-            };
-            let to = life.ended.and_then(bar).unwrap_or(last);
+        for &(k, from, to) in &placed.lives {
+            let life = &run.orders[k];
             if from > visible.end || to + 1 < visible.start {
                 continue;
             }
             let order = life.order;
+            // An exit by what it does, as on the trading page: a take profit up, a stop loss down, whatever the
+            // side; an entry by its side.
             let color = Color {
                 a: 190,
-                ..if order.qty > 0.0 { BUY } else { SELL }
+                ..match (order.reduce_only, order.kind) {
+                    (true, OrderKind::Limit) => style.candle.up,
+                    (true, OrderKind::Stop) => style.candle.down,
+                    _ if order.qty > 0.0 => BUY,
+                    _ => SELL,
+                }
             };
             let y = ctx.price.y_of(order.price) as f32;
             let (a, b) = (x_of(from), x_of(to));
@@ -1055,13 +1145,9 @@ impl Layer for StrategyLayer {
         // zoom.
         let replaying = ctx.res.get::<super::Replay>().is_some_and(|r| r.active);
         let mut fresh = Vec::new();
-        let mut position = 0.0_f64;
-        for fill in run.account.fills() {
-            let before = position;
-            position = super::trading::add_position(position, fill.qty);
-            let Some(i) = bar(fill.time).filter(|i| visible.contains(i)) else {
-                continue;
-            };
+        let fills = run.account.fills();
+        for &(k, i, name) in placed.fill_bars.iter().filter(|f| visible.contains(&f.1)) {
+            let fill = &fills[k];
             let buy = fill.qty > 0.0;
             let x = (x_of(i) / unit).round() * unit;
             let (color, start) = if buy {
@@ -1080,15 +1166,6 @@ impl Layer for StrategyLayer {
                 };
                 ctx.scene.fill(x - w / 2.0, y, w, unit, color);
             }
-            let name = if position == 0.0 {
-                "Close"
-            } else if before == 0.0 || before.signum() != position.signum() {
-                if buy { "Long" } else { "Short" }
-            } else if position.abs() > before.abs() {
-                "Add"
-            } else {
-                "Reduce"
-            };
             if just_now {
                 let reach = h + ctx.px(14.0);
                 let y = if buy { start + reach } else { start - reach };

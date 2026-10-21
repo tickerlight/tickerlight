@@ -24,7 +24,10 @@ fn texts(chart: &mut Chart) -> Vec<String> {
 fn the_equity_pane_follows_the_account_during_a_replay() {
     let mut c = chart();
     assert_eq!(c.pane_names(), ["main", "equity"]);
-    assert!(texts(&mut c).iter().any(|t| t == "Equity  +0.00"), "no trades yet");
+    assert!(
+        texts(&mut c).iter().any(|t| t == "Equity  0.00"),
+        "no trades yet, no sign"
+    );
     c.handle(Event::Key(Key::Alt('P')));
     key(&mut c, 'b');
     for _ in 0..10 {
@@ -40,7 +43,7 @@ fn the_equity_pane_follows_the_account_during_a_replay() {
     assert!((curve.last().unwrap().1 - account.net(last)).abs() < 1e-9);
     let net = account.net(last);
     let readout = texts(&mut c).into_iter().find(|t| t.starts_with("Equity")).unwrap();
-    assert_eq!(readout, format!("Equity  {net:+.2}"));
+    assert_eq!(readout, format!("Equity  {}", tickerlight_core::ticks::signed(net, 2)));
 }
 
 #[test]

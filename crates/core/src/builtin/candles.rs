@@ -169,7 +169,7 @@ fn draw_line(ctx: &mut DrawCtx<'_>, columns: &Columns, fill: bool) {
         let point = (ctx.time.x_of(center) as f32, ctx.price.y_of(columns.close[i]) as f32);
         if let Some(from) = previous {
             if fill {
-                fill_area(ctx.scene, (from, point), bottom, color, ctx.plot.0);
+                fill_area(ctx.scene, (from, point), bottom, color, ctx.plot);
             }
             ctx.scene.line(from, point, width, color);
         }
@@ -177,30 +177,40 @@ fn draw_line(ctx: &mut DrawCtx<'_>, columns: &Columns, fill: bool) {
     }
 }
 
-/// The area between the segment `from`..`to` and the level `base`, a column per pixel, in `color` at the line
-/// fading to nothing at the base (below the base the fade goes up to it).
+/// The area between the segment `from`..`to` and the level `base`, a column per pixel, in `color` fading to
+/// nothing at the base (below the base the fade goes up to it). The fade is fixed to the plot, full at its top
+/// (or bottom) edge, not stretched over each column: a column's shade at a height then matches its
+/// neighbours', so no bands show at the vertices.
 pub(crate) fn fill_area(
     scene: &mut crate::Scene,
     (from, to): ((f32, f32), (f32, f32)),
     base: f32,
     color: Color,
-    max_x: f32,
+    (max_x, max_y): (f32, f32),
 ) {
-    let (strong, none) = (Color { a: 48, ..color }, Color { a: 0, ..color });
+    // At the plot's edge; lower lines get what the fade has at their height.
+    const STRONG: f32 = 72.0;
+    let none = Color { a: 0, ..color };
     // The pixels whose centers are in [from, to): the next segment starts where this one stops, none twice.
     let (left, right) = ((from.0 - 0.5).ceil().max(0.0), (to.0 - 0.5).ceil().min(max_x));
     let span = (to.0 - from.0).max(f32::EPSILON);
+    let (above, below) = (base.max(1.0), (max_y - base).max(1.0));
     let mut x = left;
     while x < right {
         let t = ((x + 0.5 - from.0) / span).clamp(0.0, 1.0);
         let y = from.1 + (to.1 - from.1) * t;
-        let (top, colors) = if y <= base {
-            (y, (strong, none))
-        } else {
-            (base, (none, strong))
-        };
         let h = (y - base).abs();
         if h > 0.0 {
+            let reach = if y <= base { above } else { below };
+            let shade = Color {
+                a: (STRONG * (h / reach).min(1.0)).round() as u8,
+                ..color
+            };
+            let (top, colors) = if y <= base {
+                (y, (shade, none))
+            } else {
+                (base, (none, shade))
+            };
             scene.fill_gradient(x, top, 1.0, h, colors, crate::Direction::Down);
         }
         x += 1.0;

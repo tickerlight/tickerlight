@@ -198,8 +198,7 @@ impl Walk {
             let bars = bars.slice(window.train.start..window.test.end);
             let from = bars.time()[window.train.len()];
             let result = backtest(strategy, bars, account.clone());
-            let trades = closed_trades(result.account.fills());
-            let tested = trades.iter().filter(|t| t.entry >= from);
+            let tested = result.trades().iter().filter(|t| t.entry >= from);
             window.tested = Some((tested.clone().count(), tested.map(|t| t.result).sum()));
         }
         set(strategy, &self.from);
@@ -583,7 +582,8 @@ impl StrategyPanel {
         };
         let times = chart.seen().time();
         let bar = |t: Time| times.partition_point(|&x| x <= t).saturating_sub(1);
-        let trades: Vec<Watched> = closed_trades(run.account.fills())
+        let trades: Vec<Watched> = run
+            .trades()
             .iter()
             .map(|trade| {
                 let (entry, out) = (bar(trade.entry), bar(trade.exit));
@@ -667,12 +667,14 @@ impl StrategyPanel {
         }
     }
 
-    /// Picks trade `i` of `trades` in the list and brings it into view.
-    fn pick(chart: &mut Chart, trades: &[ClosedTrade], i: usize) {
-        if let Some(run) = chart.resources_mut().get_mut::<StrategyRun>() {
-            run.selected = Some(i);
-        }
-        show(chart, trades[i].entry, trades[i].exit);
+    /// Picks trade `i` of the run in the list and brings it into view.
+    fn pick(chart: &mut Chart, i: usize) {
+        let Some(run) = chart.resources_mut().get_mut::<StrategyRun>() else {
+            return;
+        };
+        run.selected = Some(i);
+        let trade = run.trades()[i];
+        show(chart, trade.entry, trade.exit);
     }
 
     /// The entries of the trades of the chosen strategy marked as wrong.
@@ -706,19 +708,20 @@ impl StrategyPanel {
         run.test = test.map(|from| TestPeriod { from, run: tested });
         run.marked = marked;
         if let Some(old) = chart.resources().get::<StrategyRun>() {
-            let (before, now) = (closed_trades(old.account.fills()), closed_trades(run.account.fills()));
+            let (before, now) = (old.trades(), run.trades());
             // The trade picked stays picked while it is still there.
-            run.selected = old.selected.filter(|&i| {
+            let selected = old.selected.filter(|&i| {
                 let (Some(trade), Some(now)) = (before.get(i), now.get(i)) else {
                     return false;
                 };
                 trade.entry == now.entry && trade.exit == now.exit
             });
-            run.changes = match again {
+            let changes = match again {
                 Again::Fresh => None,
                 Again::Bars => old.changes.clone(),
-                Again::Changed => Some(TradeChanges::between(&before, &now)),
+                Again::Changed => Some(TradeChanges::between(before, now)),
             };
+            (run.selected, run.changes) = (selected, changes);
         }
         set_strategy_run(chart, Some(run));
         self.shown = Some(Bars::of(chart));
@@ -738,7 +741,7 @@ impl StrategyPanel {
         let Some(test) = run.test else {
             return;
         };
-        let trades = closed_trades(run.account.fills());
+        let trades = run.trades();
         let step = native_step(chart.seen()).unwrap_or(60_000);
         let from = short_time(test.from, step, crate::panels::clock(chart));
         let (muted, down) = (ui.theme().muted, ui.theme().down);
@@ -1206,7 +1209,7 @@ impl<C> Panel<C> for StrategyPanel {
         };
         let account = &run.account;
         let last = chart.seen().close().last().copied().unwrap_or(0.0);
-        let (net, balance, stats) = (account.net(last), account.balance, account.stats());
+        let (net, balance, stats) = (account.net(last), account.balance, run.stats());
         let (up, down) = (ui.theme().up, ui.theme().down);
         let tint = |v: f64| Some(if v >= 0.0 { up } else { down });
         ui.section("How it did");
@@ -1232,7 +1235,7 @@ impl<C> Panel<C> for StrategyPanel {
         };
         ui.value("Position", &position, None);
 
-        let trades = closed_trades(account.fills());
+        let trades = run.trades();
         let chosen = run.selected;
         let open = open_entry(account.fills());
         let mut marked = self.marked();
@@ -1384,7 +1387,7 @@ impl<C> Panel<C> for StrategyPanel {
                     (None, true) => 0,
                     (None, false) => n - 1,
                 };
-                Self::pick(chart, &trades, i);
+                Self::pick(chart, i);
             }
         } else if let Some(i) = clicked {
             if self.watch.is_some() {
@@ -1394,7 +1397,7 @@ impl<C> Panel<C> for StrategyPanel {
                     run.selected = None;
                 }
             } else {
-                Self::pick(chart, &trades, i);
+                Self::pick(chart, i);
             }
         }
     }

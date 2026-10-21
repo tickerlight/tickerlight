@@ -473,17 +473,71 @@ impl Account {
         let range = range.start.min(view.len())..range.end.min(view.len());
         let (time, close) = (view.time(), view.close());
         let mut sim = self.empty_like();
-        let mut fills = self.fills.iter().peekable();
+        let mut next = 0;
         let mut out = Vec::with_capacity(range.len());
         for i in range.clone() {
-            // A bar counts the fills up to its end, which is the start of the next bar.
-            let end = time.get(i + 1).copied();
-            while let Some(fill) = fills.next_if(|f| end.is_none_or(|end| f.time < end)) {
-                sim.record(*fill);
-            }
+            sim.count_bar(&self.fills, &mut next, time, i);
             out.push((i, sim.net(close[i])));
         }
         out
+    }
+
+    /// Records the fills of `fills` from `next` on that bar `i` of the bars at `time` counts, moving `next` past
+    /// them. A bar counts the fills up to its end, which is the start of the next bar. Only what they leave is
+    /// kept, not the fills themselves.
+    fn count_bar(&mut self, fills: &[Fill], next: &mut usize, time: &[Time], i: usize) {
+        let end = time.get(i + 1).copied();
+        while let Some(fill) = fills.get(*next).filter(|f| end.is_none_or(|end| f.time < end)) {
+            self.record(*fill);
+            *next += 1;
+        }
+        self.fills.clear();
+    }
+}
+
+/// [`Account::equity_curve`] at every bar, kept from frame to frame: worked out again only from the last bar while
+/// the bars are the same ones and the fills it counted before that bar are still the account's first, so a frame
+/// reads it rather than going over every fill again.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct EquityBars {
+    values: Vec<f64>,
+    /// The fills counted before the last bar.
+    counted: Vec<Fill>,
+    /// What they left.
+    before_last: Account,
+    /// The times of the first two bars and the last one: the bars are the same ones while these are.
+    key: [Option<Time>; 3],
+}
+
+impl EquityBars {
+    /// The equity of `account` at each bar of `view`.
+    pub(crate) fn update(&mut self, account: &Account, view: CandleView<'_>) -> &[f64] {
+        let (time, close, fills) = (view.time(), view.close(), account.fills());
+        let (len, counted) = (self.values.len(), self.counted.len());
+        let same_bars = len > 0
+            && time.len() >= len
+            && self.key == [time.first().copied(), time.get(1).copied(), time.get(len - 1).copied()];
+        // A fill coming before the end of the bar before the last would change the bars before.
+        let same_fills = fills.get(..counted) == Some(&self.counted[..])
+            && fills.get(counted).is_none_or(|f| same_bars && f.time >= time[len - 1]);
+        let start = if same_bars && same_fills { len - 1 } else { 0 };
+        let (mut sim, mut next) = if start > 0 {
+            (self.before_last.clone(), counted)
+        } else {
+            self.counted.clear();
+            (account.empty_like(), 0)
+        };
+        self.values.truncate(start);
+        for (i, &price) in close.iter().enumerate().skip(start) {
+            if i + 1 == time.len() {
+                self.counted.extend_from_slice(&fills[self.counted.len()..next]);
+                self.before_last = sim.clone();
+            }
+            sim.count_bar(fills, &mut next, time, i);
+            self.values.push(sim.net(price));
+        }
+        self.key = [time.first().copied(), time.get(1).copied(), time.last().copied()];
+        &self.values
     }
 }
 
@@ -1765,6 +1819,34 @@ mod tests {
         assert_eq!(a.equity_curve(candles.view().until(t(1)), 0..5).len(), 2);
         // The bars before the range still count: fills made earlier are in the state.
         assert!((a.equity_curve(candles.view(), 2..3)[0].1 - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_equity_kept_from_frame_to_frame_is_the_curve_worked_out_again() {
+        let candles = bars(&[100.0, 101.0, 103.0, 102.0, 90.0, 95.0, 97.0]);
+        let mut a = Account {
+            fee_rate: 0.01,
+            ..Account::default()
+        };
+        let mut kept = EquityBars::default();
+        // A replay: a bar more each time, and the fills made on it.
+        for shown in 0..7 {
+            for (at, price, qty) in [(1, 101.0, 1.0), (3, 102.0, -2.0), (5, 95.0, 1.0)] {
+                if at == shown {
+                    a.fill(t(at), price, qty);
+                }
+            }
+            let view = candles.view().until(t(shown));
+            let want: Vec<f64> = a.equity_curve(view, 0..view.len()).iter().map(|p| p.1).collect();
+            assert_eq!(kept.update(&a, view), want);
+        }
+        // Another account in its place starts again.
+        let want: Vec<f64> = Account::default()
+            .equity_curve(candles.view(), 0..7)
+            .iter()
+            .map(|p| p.1)
+            .collect();
+        assert_eq!(kept.update(&Account::default(), candles.view()), want);
     }
 
     #[test]
