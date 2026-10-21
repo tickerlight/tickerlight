@@ -533,13 +533,18 @@ pub fn load_folder(folder: &Path) -> (Vec<WasmStrategy>, Vec<String>) {
     paths.sort();
     let (mut strategies, mut problems) = (Vec::new(), Vec::new());
     for path in paths {
-        let file = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
-        match std::fs::read(&path)
-            .map_err(|e| e.to_string())
-            .and_then(|bytes| WasmStrategy::new(&file, &bytes))
-        {
+        let file = path.file_stem().unwrap_or_default().to_string_lossy();
+        // A `.wasm` file is binary: its text form is left to the tests, where a parse error of text is understood.
+        let read = std::fs::read(&path).map_err(|e| e.to_string()).and_then(|bytes| {
+            if bytes.starts_with(b"\0asm") {
+                WasmStrategy::new(&file, &bytes)
+            } else {
+                Err("not a WebAssembly module (built with --target wasm32-unknown-unknown?)".into())
+            }
+        });
+        match read {
             Ok(strategy) => strategies.push(strategy),
-            Err(why) => problems.push(format!("{file}: {why}")),
+            Err(why) => problems.push(format!("{}: {why}", path.file_name().unwrap_or_default().display())),
         }
     }
     (strategies, problems)

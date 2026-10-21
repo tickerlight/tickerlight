@@ -774,6 +774,8 @@ impl StrategyPage {
         let files = StrategyFiles {
             folder: folder.display().to_string(),
             read: Box::new(move || {
+                // The folder is there to drop a file in, as the guide says; without it the read finds nothing anyway.
+                let _ = std::fs::create_dir_all(&folder);
                 let (strategies, mut problems) = tickerlight_wasm::load_folder(&folder);
                 let (models, more) = tickerlight_onnx::load_folder(&folder);
                 problems.extend(more);

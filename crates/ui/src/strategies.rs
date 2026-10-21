@@ -1113,7 +1113,8 @@ impl<C> Panel<C> for StrategyPanel {
         let mut write = false;
         if let Some(files) = &self.files {
             for problem in &self.problems {
-                ui.heading(problem);
+                // A parser's message runs over lines (a pointer under the source); its first says what is wrong.
+                ui.heading(problem.lines().next().unwrap_or_default());
             }
             let read = ui.button("Read the strategy files again");
             ui.tip(&format!(
@@ -1522,7 +1523,10 @@ mod tests {
             read: Box::new(move || {
                 counted.set(counted.get() + 1);
                 let strategy: Box<dyn Strategy> = Box::new(MovingAverageCross { fast: 3.0, slow: 7.0 });
-                (vec![strategy], vec!["broken: not a strategy".into()])
+                (
+                    vec![strategy],
+                    vec!["broken.wasm: expected `(`\n --> <anon>:1:1".into()],
+                )
             }),
             features: Box::new(move |csv| {
                 kept.replace(csv.to_string());
@@ -1531,7 +1535,7 @@ mod tests {
         };
         let own: Vec<Box<dyn Strategy>> = vec![Box::new(RsiReversal::default())];
         let mut w = window_with(StrategyPanel::new(own).with_files(files));
-        assert!(has(&w, "broken: not a strategy"));
+        assert!(has(&w, "broken.wasm: expected `(`"));
         click(&mut w, "Moving average cross 3/7");
         click(&mut w, "Run on the chart");
         assert_eq!(run(&w).unwrap().name, "Moving average cross 3/7");
