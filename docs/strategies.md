@@ -1,9 +1,10 @@
 # Writing a strategy
 
 A strategy is written in Rust and built to WebAssembly. Tickerlight loads the `.wasm` file from its
-`strategies` folder and runs it without being rebuilt. The strategy runs sandboxed: no files, no network, and a
-cap on memory and on the work done at a bar. It sees the bars only up to the one that just closed, as the built-in
-strategies do, so a backtest cannot look ahead.
+`strategies` folder and runs it without being rebuilt. The strategy runs sandboxed: no files, no network, one
+memory of at most 256 MB, a cap on the work done at a bar and in a whole run, at most 32 plotted lines and 64
+indicators read in a run. It sees the bars only up to the one that just closed, as the built-in strategies do,
+so a backtest cannot look ahead.
 
 The same file runs everywhere the program runs a strategy: the backtest on the chart, the replay (its trades come
 out as the bars do), the test period kept apart, the walk forward, and paper trading on a live chart.
