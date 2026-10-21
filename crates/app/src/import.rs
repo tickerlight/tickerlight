@@ -58,11 +58,12 @@ pub fn import(store: &Store, path: &Path) -> Result<Series, String> {
 }
 
 /// The symbol a file or a typed name stands for: upper-cased, with what is not a letter, a digit, `.`, `-` or `_`
-/// as `-`. `None` when nothing is left that could name a folder.
+/// as `-`, at most 64 long. `None` when nothing is left that could name a folder.
 pub fn symbol_name(text: &str) -> Option<String> {
     let symbol: String = text
         .trim()
         .chars()
+        .take(64)
         .map(|c| c.to_ascii_uppercase())
         .map(|c| {
             if c.is_ascii_uppercase() || c.is_ascii_digit() || matches!(c, '.' | '-' | '_') {

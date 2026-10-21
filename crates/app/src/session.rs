@@ -19,7 +19,7 @@ use tickerlight_core::{Chart, Event, Look, Time, TimeScale, native_step};
 use tickerlight_ui::Layout;
 use tickerlight_ui::panels::{Journal, OrderSizing, SizeMode};
 
-use crate::store::{INTERVALS, Series, Venue};
+use crate::store::{INTERVALS, Series, Venue, path_safe};
 
 const HEADER: &str = "chart-session 1";
 const EXTENSION: &str = "session";
@@ -435,6 +435,7 @@ impl Session {
 
     /// The file name: when it began and the symbol, so a listing sorts by time.
     pub fn file_name(&self) -> String {
+        debug_assert!(path_safe(&self.series.symbol), "{:?}", self.series.symbol);
         format!("{}-{}.{EXTENSION}", self.created.0, self.series.symbol)
     }
 }
@@ -455,12 +456,14 @@ fn csv_field(text: &str) -> String {
     }
 }
 
+/// The series of a line of a session or resume file; `None` for one it does not name, or whose symbol could not
+/// name a folder (the file may have come from elsewhere).
 fn parse_series(rest: &str) -> Option<Series> {
     let mut w = rest.split_whitespace();
     let (venue, symbol, interval) = (w.next()?, w.next()?, w.next()?);
     Some(Series {
         venue: Venue::from_name(venue)?,
-        symbol: symbol.into(),
+        symbol: Some(symbol).filter(|s| path_safe(s))?.into(),
         interval: INTERVALS.into_iter().find(|i| i.as_str() == interval)?,
     })
 }
@@ -539,6 +542,7 @@ impl Sessions {
 
     /// Where the snapshots of a session's trades go: beside its file, named as it is without the extension.
     pub fn snapshots(&self, created: Time, symbol: &str) -> PathBuf {
+        debug_assert!(path_safe(symbol), "{symbol:?}");
         self.dir.join(format!("{}-{symbol}", created.0))
     }
 
@@ -546,6 +550,7 @@ impl Sessions {
     /// began), and returns where.
     pub fn export(session: &Session, dir: &Path) -> io::Result<PathBuf> {
         fs::create_dir_all(dir)?;
+        debug_assert!(path_safe(&session.series.symbol), "{:?}", session.series.symbol);
         let t = DateTime::from_time(session.created);
         let name = format!(
             "{}-{}-{:02}-{:02}-{:02}{:02}.csv",

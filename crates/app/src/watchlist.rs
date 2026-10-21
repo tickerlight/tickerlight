@@ -11,7 +11,7 @@ use tickerlight_ui::panels::price;
 use tickerlight_ui::{Cell, Column, Sort, Ui};
 
 use crate::program::Program;
-use crate::store::{Store, Venue};
+use crate::store::{Store, Venue, path_safe};
 
 /// How long the prices of a market are shown before they are asked for again.
 const FRESH: Duration = Duration::from_secs(60);
@@ -139,9 +139,10 @@ pub fn display(venue: Venue, symbol: &str) -> String {
 }
 
 /// The prices of an exchange's market, the busiest first, as Binance's tickers; Dukascopy's instruments without
-/// prices (`root` is the data folder that keeps their list).
+/// prices (`root` is the data folder that keeps their list). A symbol that could not name its folder is left out:
+/// the list comes from a server, and a symbol opened becomes a folder.
 fn tickers(venue: Venue, root: &Path) -> Result<Vec<Ticker>, String> {
-    match venue {
+    let mut all = match venue {
         Venue::Binance(market) => Binance::for_market(market).tickers().map_err(|e| e.to_string()),
         Venue::Okx(market) => tickerlight_okx::Okx::new(market)
             .tickers()
@@ -177,7 +178,9 @@ fn tickers(venue: Venue, root: &Path) -> Result<Vec<Ticker>, String> {
             .map_err(|e| e.to_string()),
         Venue::Dukascopy => crate::dukascopy::tickers(root),
         Venue::Imported => Ok(Vec::new()),
-    }
+    }?;
+    all.retain(|t| path_safe(&t.symbol));
+    Ok(all)
 }
 
 fn okx_ticker(t: tickerlight_okx::Ticker) -> Ticker {
@@ -617,7 +620,8 @@ fn merge(list: &mut Vec<Ticker>, came: &[Ticker]) {
     for ticker in came {
         match list.iter_mut().find(|t| t.symbol == ticker.symbol) {
             Some(t) => (t.last, t.change) = (ticker.last, ticker.change),
-            None => list.push(ticker.clone()),
+            None if path_safe(&ticker.symbol) => list.push(ticker.clone()),
+            None => {}
         }
     }
 }

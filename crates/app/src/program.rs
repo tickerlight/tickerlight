@@ -40,7 +40,7 @@ use crate::flow::Chunk;
 use crate::session::{Resume, Resumed, Session, Sessions};
 use crate::sessions_page::{OnPage, Page, sessions_panel};
 use crate::snapshots::Snapshots;
-use crate::store::{Series, Store, Venue};
+use crate::store::{Series, Store, Venue, path_safe};
 use crate::watchlist::{Counterpart, Watchlist, display, watchlist_panel};
 use crate::{flow, import, sync};
 
@@ -512,8 +512,14 @@ impl Program {
         })
     }
 
-    /// Asks for `symbol` of `venue`, the symbol field showing it. The search that found it is done with.
+    /// Asks for `symbol` of `venue`, the symbol field showing it. The search that found it is done with. A symbol
+    /// that could not name its folder (from a server's list, say: `../x`) is refused.
     pub(crate) fn open(&mut self, venue: Venue, symbol: String) {
+        if !path_safe(&symbol) {
+            self.status = format!("{symbol:?} is not a symbol the program can keep");
+            self.error = true;
+            return;
+        }
         (self.symbol, self.venue) = (symbol.clone(), venue.index());
         self.watch.search.clear();
         self.watch.pick = 0;
@@ -3056,6 +3062,33 @@ mod tests {
         assert_eq!(window.workspace().ctx.columns_text, "Grade: A, B");
         let on_chart = window.workspace().chart().resources().get::<JournalColumns>().cloned();
         assert_eq!(on_chart, Some(typed), "the next start has them");
+    }
+
+    #[test]
+    fn a_symbol_that_could_name_a_folder_elsewhere_is_refused() {
+        let source = source("traversal");
+        let mut window = Window::new(source.clone(), series("ETHUSDT"), None);
+        window.resize(1200.0, 700.0);
+        settle(&mut window);
+        let shown = window.workspace().ctx.shown.clone();
+        for symbol in ["../x-PERPETUAL", "/tmp/x", "..", "a/../../b"] {
+            // As typed, it is cleaned up or refused; as from a server's list, refused.
+            let typed = Venue::Deribit.symbol_of(symbol);
+            assert!(typed.as_deref().is_none_or(path_safe), "{symbol}: {typed:?}");
+            window.workspace_mut().ctx.open(Venue::Deribit, symbol.into());
+            let p = &window.workspace().ctx;
+            assert_eq!(p.request, None, "{symbol}");
+            assert!(
+                p.status.contains("is not a symbol the program can keep"),
+                "{}",
+                p.status
+            );
+            window.handle(Event::Tick { dt: 0.0 });
+            settle(&mut window);
+            assert_eq!(window.workspace().ctx.shown, shown, "{symbol}");
+        }
+        assert!(!source.root.join("deribit").exists(), "nothing is written for them");
+        std::fs::remove_dir_all(&source.root).ok();
     }
 
     #[test]

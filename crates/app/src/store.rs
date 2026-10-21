@@ -238,7 +238,8 @@ impl Venue {
         }
     }
 
-    /// The symbol as the venue writes it, from what was typed; `None` if nothing names one.
+    /// The symbol as the venue writes it, from what was typed; `None` if nothing names one or what does could not
+    /// name its folder ([`path_safe`]).
     pub fn symbol_of(self, text: &str) -> Option<String> {
         match self {
             Venue::Binance(_) => {
@@ -258,6 +259,7 @@ impl Venue {
             Venue::Dukascopy => tickerlight_dukascopy::symbol_of(text),
             Venue::Imported => crate::import::symbol_name(text),
         }
+        .filter(|s| path_safe(s))
     }
 
     /// An error of a request to it in words: what its answer means instead of the address and the status.
@@ -289,6 +291,19 @@ pub struct Series {
     pub venue: Venue,
     pub symbol: String,
     pub interval: Interval,
+}
+
+/// Whether a symbol can name its folder: letters (of any script: Binance lists `币安人生USDT`), digits, `.`, `-` and
+/// `_`, 1 to 64 of them, and not `.` or `..`. A symbol becomes a folder and file names, so one from a server, a
+/// session file or the symbol field that is not like this (`../x`, `/tmp/x`) could put files outside the data
+/// folder; it is refused where it comes in. Every real symbol of every venue is like this.
+pub fn path_safe(symbol: &str) -> bool {
+    (1..=64).contains(&symbol.chars().count())
+        && symbol
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '.' | '-' | '_'))
+        && symbol != "."
+        && symbol != ".."
 }
 
 /// The folders of a data folder that hold only market data downloaded from a source, one a source.
@@ -363,12 +378,14 @@ impl Store {
     }
 
     fn candles_dir(&self, series: &Series) -> PathBuf {
+        debug_assert!(path_safe(&series.symbol), "{:?}", series.symbol);
         self.venue_dir(series.venue)
             .join(&series.symbol)
             .join(series.interval.as_str())
     }
 
     fn trades_dir(&self, series: &Series) -> PathBuf {
+        debug_assert!(path_safe(&series.symbol), "{:?}", series.symbol);
         self.venue_dir(series.venue).join(&series.symbol).join(TRADES)
     }
 
@@ -604,6 +621,26 @@ mod tests {
             venue: Venue::Binance(Market::Spot),
             symbol: "BTCUSDT".into(),
             interval: Interval::M1,
+        }
+    }
+
+    #[test]
+    fn real_symbols_can_name_a_folder_and_paths_cannot() {
+        let real = [
+            "BTCUSDT",
+            "币安人生USDT",
+            "BTC-USDT",
+            "PF_XBTUSD",
+            "BTC_USDC-PERPETUAL",
+            "AAPL.US",
+            "ACME-CORP",
+        ];
+        for symbol in real {
+            assert!(path_safe(symbol), "{symbol}");
+        }
+        assert!(path_safe(&"A".repeat(64)));
+        for symbol in ["", ".", "..", "../x", "/tmp/x", "a\\b", "C:x", "a b", &"A".repeat(65)] {
+            assert!(!path_safe(symbol), "{symbol:?}");
         }
     }
 
