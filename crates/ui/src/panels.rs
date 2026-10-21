@@ -11,6 +11,7 @@ use tickerlight_core::builtin::{
 };
 use tickerlight_core::calendar::{Clock, DateTime, MS_PER_DAY, Zone, full_label, parse_time};
 use tickerlight_core::plugin::commands;
+use tickerlight_core::ticks::signed;
 use tickerlight_core::{Align, Chart, Color, Event, ScaleSetting, Time, TimeScale, native_step, palette, span_label};
 
 use crate::{Cell, Column, Icon, Panel, Ui};
@@ -37,9 +38,9 @@ pub fn price(value: f64) -> String {
     format!("{value:.decimals$}")
 }
 
-/// Profit or loss in the quote currency, signed.
+/// Profit or loss in the quote currency, signed (zero without a sign).
 pub fn money(value: f64) -> String {
-    format!("{value:+.2}")
+    signed(value, 2)
 }
 
 fn parse_price(text: &str) -> Option<f64> {
@@ -1444,7 +1445,7 @@ pub struct StatsPanel {
 /// `+1.23%`: a share of the starting balance, signed.
 pub(crate) fn percent_of(value: f64, balance: f64) -> String {
     if balance > 0.0 {
-        format!("{:+.2}%", value * 100.0 / balance)
+        format!("{}%", signed(value * 100.0 / balance, 2))
     } else {
         "-".into()
     }
@@ -1551,11 +1552,11 @@ impl<C> Panel<C> for StatsPanel {
             if ui.button("Try other stops and targets") {
                 self.tried = Some((on, exits_tried(fills, chart.base())));
             }
-            ui.tip("What the trades would have made with a stop and a target at a fixed % of their entry, on the bars seen");
+            ui.tip("With a fixed % stop and target");
         }
         if let Some((_, tried)) = &self.tried {
             // Before fees, as each trade's % of its entry added up.
-            let share = |v: f64| format!("{:+.2}%", v * 100.0);
+            let share = |v: f64| format!("{}%", signed(v * 100.0, 2));
             let traded = format!("{} in {}", share(tried.as_traded), count_trades(tried.trades));
             ui.value("As traded", &traded, tint(tried.as_traded));
             for t in tried.tried.iter().take(3) {
@@ -2606,7 +2607,8 @@ mod tests {
         let texts: Vec<&str> = scene.texts.iter().map(|t| t.text.as_str()).collect();
         let sells = texts.iter().filter(|&&t| t == "Sell").count();
         assert!(sells >= 2, "the side choice and the closing fill: {texts:?}");
-        assert!(texts.contains(&"+0.00"));
+        // A zero result has no sign.
+        assert!(texts.contains(&"0.00") && !texts.contains(&"+0.00"));
     }
 
     #[test]
@@ -2787,7 +2789,7 @@ mod tests {
         );
         click(&mut w, "Close");
         let texts = texts(&mut w);
-        for shown in ["20000.00", "+0.00", "+0.00%", "0.00 (0.00%)"] {
+        for shown in ["20000.00", "0.00", "0.00%", "0.00 (0.00%)"] {
             assert!(texts.contains(&shown.to_string()), "{shown}: {texts:?}");
         }
     }

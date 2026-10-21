@@ -1069,7 +1069,11 @@ impl Layer for TradingLayer {
         } else {
             String::new()
         };
-        let text = format!("{position}   P&L {pnl:+.2}   Realized {:+.2}{fees}", account.realized());
+        let (pnl, realized) = (
+            crate::ticks::signed(pnl, 2),
+            crate::ticks::signed(account.realized(), 2),
+        );
+        let text = format!("{position}   P&L {pnl}   Realized {realized}{fees}");
         ctx.scene
             .text(ctx.px(12.0), ctx.px(34.0), font_size, color, Align::Left, text);
         let stats = account.stats();

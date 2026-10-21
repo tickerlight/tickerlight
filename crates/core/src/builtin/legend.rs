@@ -99,7 +99,7 @@ impl Layer for LegendLayer {
             ("H ", format!("{high:.d$}")),
             ("L ", format!("{low:.d$}")),
             ("C ", format!("{close:.d$}")),
-            ("", format!("{change:+.2}%")),
+            ("", format!("{}%", crate::ticks::signed(change, 2))),
             ("V ", compact(view.volume()[i])),
         ];
         let part_w = |(name, value): &(&str, String)| font.measure(name, size) + font.measure(value, size) + gap;

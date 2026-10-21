@@ -748,7 +748,10 @@ pub fn watchlist_panel(ui: &mut Ui, _: &mut Chart, p: &mut Program) {
             Some(t) if t.last.is_finite() => vec![
                 Cell::new(name),
                 Cell::new(price(t.last)),
-                Cell::colored(format!("{:+.2}%", t.change), if t.change >= 0.0 { up } else { down }),
+                Cell::colored(
+                    format!("{}%", tickerlight_core::ticks::signed(t.change, 2)),
+                    if t.change >= 0.0 { up } else { down },
+                ),
             ],
             _ => vec![Cell::new(name), Cell::new("-"), Cell::new("-")],
         }

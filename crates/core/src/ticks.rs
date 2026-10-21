@@ -31,6 +31,15 @@ pub fn format_price(scale: &PriceScale, value: f64, decimals: usize) -> String {
     }
 }
 
+/// A change with its sign: `+1.50`, `-0.25`; what rounds to zero has no side, `0.00` (not `+0.00` or `-0.00`).
+pub fn signed(value: f64, decimals: usize) -> String {
+    let text = format!("{value:+.decimals$}");
+    match text.strip_prefix(['+', '-']) {
+        Some(digits) if digits.bytes().all(|b| b == b'0' || b == b'.') => digits.to_string(),
+        _ => text,
+    }
+}
+
 /// The ticks of the price axis: `(value, y)` from the lowest to the highest, where the value is what
 /// the axis shows (a price, or a percentage), and the number of decimals its labels need.
 pub fn price_ticks(price: &PriceScale, plot_h: f32, scale: f32) -> (Vec<(f64, f32)>, usize) {

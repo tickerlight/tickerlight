@@ -89,7 +89,7 @@ pub fn sessions_panel(ui: &mut Ui, chart: &mut Chart, p: &mut Program) {
     ui.columns(2, |ui| {
         ui.value("Result", &money(net), Some(color(net)));
         let share = if account.balance > 0.0 {
-            format!("{:+.2}%", net * 100.0 / account.balance)
+            format!("{}%", tickerlight_core::ticks::signed(net * 100.0 / account.balance, 2))
         } else {
             "-".into()
         };
