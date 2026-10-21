@@ -5,8 +5,9 @@ on:
   push:
     tags: ["v*"]
 
-permissions:
-  contents: write
+# Nothing by default: the build runs every dependency's build script, so it gets a token that can only read, and
+# only the job that makes the release can write.
+permissions: {}
 
 env:
   CARGO_TERM_COLOR: always
@@ -28,8 +29,12 @@ jobs:
           - os: macos-15-intel
             target: x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - run: rustup target add ${{ matrix.target }}
       - run: cargo build --release --locked -p tickerlight-app --bin tickerlight --target ${{ matrix.target }}
       - name: Package
@@ -58,16 +63,23 @@ jobs:
     needs: build
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
+      # The checksums of the archives there are, uploaded with them.
       - shell: bash
         run: |
           shopt -s nullglob
+          archives=(tickerlight-*.zip tickerlight-*.tar.gz)
+          [ ${#archives[@]} -gt 0 ] || { echo "no archives"; exit 1; }
+          sha256sum "${archives[@]}" > SHA256SUMS
+          cat SHA256SUMS
           gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 ||
             gh release create "$GITHUB_REF_NAME" --draft --title "Tickerlight $GITHUB_REF_NAME"
-          gh release upload "$GITHUB_REF_NAME" --clobber tickerlight-*.zip tickerlight-*.tar.gz
+          gh release upload "$GITHUB_REF_NAME" --clobber "${archives[@]}" SHA256SUMS
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

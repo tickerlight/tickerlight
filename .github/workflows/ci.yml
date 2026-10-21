@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -13,6 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       # The software Vulkan driver and its loader: the pixel tests draw offscreen with them (the loader finds it).
       - run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers libvulkan1
       - run: rustup component add rustfmt clippy
@@ -32,6 +37,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release -p tickerlight-app --bin tickerlight
       - run: cargo test --workspace
