@@ -1663,8 +1663,7 @@ impl Window {
                 Ok(Message::Done(series, Ok((candles, note)))) => {
                     // What was on the chart is kept; the series that came begins a session of its own.
                     let pending = self.pending.take();
-                    self.autosave(true);
-                    self.end_session();
+                    self.close_session();
                     self.clear();
                     self.pending = pending;
                     self.show(series, candles, note);
@@ -2506,7 +2505,7 @@ impl Window {
             return;
         }
         if let Some(before) = self.last_state.take() {
-            self.store(before);
+            self.keep(before);
         }
         self.end_session();
         let res = self.workspace.chart_mut().resources_mut();
@@ -2564,6 +2563,37 @@ impl Window {
         self.saved.clear();
         self.unsaved = false;
         self.pending = None;
+    }
+
+    /// Ends the session going on: saved as it is now, or dropped with its file when nothing was done in it.
+    fn close_session(&mut self) {
+        match self.current() {
+            Some(session) if session.is_idle() => self.discard(&session),
+            _ => self.autosave(true),
+        }
+        self.end_session();
+    }
+
+    /// Writes a session that ended, or drops it when nothing was done in it (a replay only looked at, a random
+    /// start left at once): it would be a row of no trades in the list.
+    fn keep(&mut self, session: Session) {
+        if session.is_idle() {
+            self.discard(&session);
+        } else {
+            self.store(session);
+        }
+    }
+
+    /// Takes a session out of the list and off the disk, if it was written.
+    fn discard(&mut self, session: &Session) {
+        let list = &mut self.workspace.ctx.sessions;
+        let Some(at) = list.iter().position(|s| s.created == session.created) else {
+            return;
+        };
+        let saved = list.remove(at);
+        if let Err(e) = self.sessions.delete(&saved) {
+            self.save_failed(e);
+        }
     }
 
     /// Clears the chart of a session: no replay, no account history, no notes. The drawings stay: they are the
@@ -2629,8 +2659,7 @@ impl Window {
         }
         let p = &mut self.workspace.ctx;
         if std::mem::take(&mut p.new_session) {
-            self.autosave(true);
-            self.end_session();
+            self.close_session();
             self.clear();
             return true;
         }
@@ -2645,8 +2674,7 @@ impl Window {
         };
         (p.symbol, p.venue) = (session.series.symbol.clone(), session.series.venue.index());
         if p.shown.as_ref() == Some(&session.series) && self.loading.is_none() {
-            self.autosave(true);
-            self.end_session();
+            self.close_session();
             self.put(&session);
         } else {
             // Saves and ends the session going on.
@@ -4280,6 +4308,49 @@ mod tests {
         let text = std::fs::read_to_string(csv).unwrap();
         assert_eq!(text.lines().count(), 2, "{text}");
         assert!(text.lines().nth(1).unwrap().contains(",buy,95.24,"), "{text}");
+        std::fs::remove_dir_all(&source.root).unwrap();
+    }
+
+    #[test]
+    fn a_replay_with_nothing_done_leaves_no_session_and_one_traded_in_is_kept() {
+        let source = source("idle-sessions");
+        let (year, month) = sync::months_before(now(), 1);
+        let start = Period::Month { year, month }.start();
+        let candles: Vec<Candle> = (0..300)
+            .map(|i| Candle {
+                time: Time(start.0 + i * 60_000),
+                open: 10.0,
+                high: 11.0,
+                low: 9.0,
+                close: 10.5,
+                volume: 1.0,
+            })
+            .collect();
+        Store::new(&source.root)
+            .write(&series("ETHUSDT"), Period::Month { year, month }, &candles)
+            .unwrap();
+        let mut window = Window::new(source.clone(), series("ETHUSDT"), None);
+        window.resize(1400.0, 800.0);
+        settle(&mut window);
+        window.build_scene(&mut Scene::new());
+        let saved = || Sessions::new(&source.root).list().unwrap().len();
+
+        // Only looked at: kept while it runs (a restart resumes it), gone once it is left.
+        start_replay(&mut window);
+        click(&mut window, "Step");
+        settle(&mut window);
+        assert_eq!(saved(), 1, "kept while it runs");
+        click(&mut window, "Exit replay");
+        settle(&mut window);
+        assert_eq!(saved(), 0);
+        assert!(window.workspace().ctx.sessions.is_empty());
+
+        // An order is something done: that session stays.
+        start_replay(&mut window);
+        click(&mut window, "Buy 95.24 at market");
+        click(&mut window, "Exit replay");
+        settle(&mut window);
+        assert_eq!(saved(), 1);
         std::fs::remove_dir_all(&source.root).unwrap();
     }
 

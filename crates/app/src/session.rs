@@ -101,6 +101,12 @@ impl Session {
         }
     }
 
+    /// Nothing was done in it: no fills, no orders, no notes. (Its drawings are the symbol's, kept apart.) Such a
+    /// session is not kept once it ends: a replay only looked at is no session to look back on.
+    pub fn is_idle(&self) -> bool {
+        self.fills.is_empty() && self.orders.is_empty() && self.journal.notes.is_empty()
+    }
+
     /// Puts the chart (of this session's series) where the session was. A live session goes on with the chart as
     /// it is (the newest bars, in the timeframe and look chosen): only its account, sizing, drawings and notes.
     pub fn apply(&self, chart: &mut Chart) {
