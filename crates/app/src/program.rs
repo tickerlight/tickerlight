@@ -3267,7 +3267,7 @@ mod tests {
         assert_eq!(window.workspace().ctx.shown, Some(series("SOLUSDT")));
         window.build_scene(&mut Scene::new());
         // It is one of those a first start watches: taken off, then put back at the end.
-        click(&mut window, "Remove SOLUSDT");
+        click(&mut window, crate::watchlist::REMOVE_SHOWN);
         assert!(
             !window
                 .workspace()
@@ -3275,7 +3275,7 @@ mod tests {
                 .watch
                 .contains(Venue::Binance(Market::Spot), "SOLUSDT")
         );
-        click(&mut window, "Add SOLUSDT");
+        click(&mut window, crate::watchlist::ADD_SHOWN);
         drop(window);
         let text = std::fs::read_to_string(source.root.join("watchlist.txt")).unwrap();
         assert!(

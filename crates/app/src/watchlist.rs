@@ -660,13 +660,17 @@ fn sort_rows<'a>(rows: &mut [(Venue, String)], sort: Sort, ticker: impl Fn(Venue
     });
 }
 
+/// The button that puts the symbol on the chart in the watchlist, and the one that takes it out.
+pub const ADD_SHOWN: &str = "Add to watchlist";
+pub const REMOVE_SHOWN: &str = "Remove from watchlist";
+
 pub fn watchlist_panel(ui: &mut Ui, _: &mut Chart, p: &mut Program) {
     let (up, down, muted) = (ui.theme().up, ui.theme().down, ui.theme().muted);
     let venue = p.venue;
     let w = &mut p.watch;
     ui.section("Watchlist");
     let field = ui.text_field(&mut w.search, 0.0, "Search symbols");
-    ui.tip("Any part of a symbol, like ETH or USDC; Up and Down pick, Enter opens");
+    ui.tip("Like ETH or USDC; Enter opens");
     if field.changed {
         w.pick = 0;
     }
@@ -685,15 +689,10 @@ pub fn watchlist_panel(ui: &mut Ui, _: &mut Chart, p: &mut Program) {
     }
     if let Some(shown) = &p.shown {
         let watched = w.contains(shown.venue, &shown.symbol);
-        let name = display(shown.venue, &shown.symbol);
-        let text = if watched {
-            format!("Remove {name}")
-        } else {
-            format!("Add {name}")
-        };
-        if ui.button(&text) {
+        if ui.button(if watched { REMOVE_SHOWN } else { ADD_SHOWN }) {
             w.toggle(shown.venue, &shown.symbol);
         }
+        ui.tip(&display(shown.venue, &shown.symbol));
     }
     if let Some(note) = &w.note[venue] {
         ui.label_colored(note, muted);
