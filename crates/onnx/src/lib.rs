@@ -30,9 +30,24 @@ pub struct OnnxModel {
     stopped: Option<String>,
 }
 
+/// The largest model file loaded: well above any model of a bar's six numbers, and a file this big is a mistake or
+/// a trap that would take the memory.
+const MAX_FILE: u64 = 512 << 20;
+
 impl OnnxModel {
-    /// The model in `bytes` (an ONNX file) named `name`; what is wrong with it otherwise.
+    /// The model in `bytes` (an ONNX file) named `name`; what is wrong with it otherwise. The ONNX parser and the
+    /// optimizer are not built for hostile files and may panic on one: that is caught and named, so a bad file in
+    /// the folder costs only itself.
     pub fn new(name: &str, bytes: &[u8]) -> Result<Self, String> {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| Self::read(name, bytes))).unwrap_or_else(|panic| {
+            let what = (panic.downcast_ref::<&str>().copied())
+                .or(panic.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("no reason given");
+            Err(format!("it broke the model reader: {what}"))
+        })
+    }
+
+    fn read(name: &str, bytes: &[u8]) -> Result<Self, String> {
         let model = tract_onnx::onnx().model_for_read(&mut &bytes[..]).map_err(why)?;
         let input = model.input_fact(0).map_err(why)?;
         let width = input.shape.dims().last().and_then(|d| match d.concretize() {
@@ -152,15 +167,26 @@ pub fn load_folder(folder: &Path) -> (Vec<OnnxModel>, Vec<String>) {
     let (mut models, mut problems) = (Vec::new(), Vec::new());
     for path in paths {
         let file = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
-        match std::fs::read(&path)
-            .map_err(|e| e.to_string())
-            .and_then(|bytes| OnnxModel::new(&file, &bytes))
-        {
+        match read_model(&path, &file) {
             Ok(model) => models.push(model),
-            Err(why) => problems.push(format!("{file}: {why}")),
+            Err(why) => problems.push(format!("{}: {why}", path.file_name().unwrap_or_default().display())),
         }
     }
     (models, problems)
+}
+
+/// The model in the file at `path`, named `name`, refusing one too big to be a model of a bar.
+fn read_model(path: &Path, name: &str) -> Result<OnnxModel, String> {
+    let size = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
+    if size > MAX_FILE {
+        return Err(format!(
+            "the file is {} MB, more than the {} MB a model may be",
+            size >> 20,
+            MAX_FILE >> 20
+        ));
+    }
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    OnnxModel::new(name, &bytes)
 }
 
 #[cfg(test)]
@@ -319,13 +345,20 @@ mod tests {
         std::fs::create_dir_all(&folder).unwrap();
         std::fs::write(folder.join("good.onnx"), model(&AGAINST, 0.0, true)).unwrap();
         std::fs::write(folder.join("bad.onnx"), b"not a model").unwrap();
+        // Too big to be read at all: a sparse file, so the test writes nothing.
+        let huge = std::fs::File::create(folder.join("huge.onnx")).unwrap();
+        huge.set_len(MAX_FILE + 1).unwrap();
         std::fs::write(folder.join("notes.txt"), b"not read").unwrap();
         let (models, problems) = load_folder(&folder);
         std::fs::remove_dir_all(&folder).unwrap();
         let names: Vec<String> = models.iter().map(|m| m.name()).collect();
         assert_eq!(names, ["Model good 55"]);
-        assert_eq!(problems.len(), 1);
-        assert!(problems[0].starts_with("bad: "), "{problems:?}");
+        assert_eq!(problems.len(), 2);
+        assert!(problems[0].starts_with("bad.onnx: "), "{problems:?}");
+        assert!(
+            problems[1].starts_with("huge.onnx: the file is 512 MB, more than"),
+            "{problems:?}"
+        );
         assert!(load_folder(&folder).0.is_empty(), "no folder, no models");
     }
 }

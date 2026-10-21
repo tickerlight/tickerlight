@@ -54,5 +54,6 @@ skl2onnx is refused at load.
 ## 3. Run it
 
 Put the `.onnx` file into the `strategies` folder next to `features.csv`, then "Read the strategy files again".
-It is listed as "Model <file> <sure>". A file the program cannot load is named on the Strategy page with the
-reason.
+It is listed by its file name and setting, as "Model logistic 55". A file the program cannot load is named on the
+Strategy page with the reason. A model runs without the sandbox a `.wasm` strategy has (no cap on its memory or
+time), so load only models you trust.
