@@ -1,7 +1,7 @@
 use tickerlight_core::builtin::LinkedTime;
 use tickerlight_core::{Align, Chart, Color, Event, Font, Key, PointerShape, Scene, Surface, Time};
 
-use crate::ui::{BARS, ContextAt};
+use crate::ui::{BARS, ContextAt, Tip};
 use crate::{Area, Theme, Ui, UiState};
 
 /// How wide a tip gets before it goes on the next line, before scaling.
@@ -174,8 +174,8 @@ struct ApartView {
 
 /// Width of the right column, logical pixels.
 const RIGHT_WIDTH: f32 = 280.0;
-/// The narrowest the right column gets in a small window.
-const RIGHT_MIN_WIDTH: f32 = 224.0;
+/// The narrowest the right column gets in a small window: at 800 px it leaves the chart most of the width.
+const RIGHT_MIN_WIDTH: f32 = 200.0;
 /// Width of the left column.
 const LEFT_WIDTH: f32 = 44.0;
 
@@ -584,7 +584,7 @@ impl<C> Workspace<C> {
         };
         // A narrow window gives the chart more of its width: the column narrows down to `RIGHT_MIN_WIDTH`.
         let right = if self.has(Dock::Right) {
-            let width = (0.28 * w).clamp(RIGHT_MIN_WIDTH * self.scale, RIGHT_WIDTH * self.scale);
+            let width = (0.25 * w).clamp(RIGHT_MIN_WIDTH * self.scale, RIGHT_WIDTH * self.scale);
             width.min((w - strip).max(0.0))
         } else {
             0.0
@@ -860,6 +860,9 @@ impl<C> Workspace<C> {
         let (consumed, changed) = self.run(Some(event), None);
         // A control acted on the chart or on the state the panels show.
         self.charts[self.active].dirty |= changed;
+        if let Some(dock) = self.state.fade.take() {
+            self.fade_in(dock);
+        }
         consumed
     }
 
@@ -990,9 +993,11 @@ impl<C> Workspace<C> {
         out
     }
 
-    /// The tip of the control under the pointer, below it (above it at the bottom of the window), over everything.
+    /// The tip of the control under the pointer, over everything: below a bar's control (above it at the bottom of
+    /// the window), beside a column's (toward the middle of the window), so it covers neither the bar's own row nor
+    /// the rows of the column under it.
     fn draw_tip(&self, scene: &mut Scene) {
-        let Some((text, control)) = &self.state.tip else {
+        let Some(Tip { text, control, beside }) = &self.state.tip else {
             return;
         };
         let px = |v: f32| v * self.scale;
@@ -1005,13 +1010,25 @@ impl<C> Workspace<C> {
         let w = widest + 2.0 * pad;
         let row = px(self.theme.font_size) * 1.4;
         let h = px(self.theme.row_height) - row + row * lines.len() as f32;
-        let x = control.x.min(self.size.0 - w).max(0.0);
-        let below = control.y + control.h + px(4.0);
-        let y = if below + h <= self.size.1 {
-            below
+        let gap = px(6.0);
+        let (x, y) = if *beside {
+            let x = if control.x + control.w / 2.0 > self.size.0 / 2.0 {
+                control.x - gap - w
+            } else {
+                control.x + control.w + gap
+            };
+            (x, control.y + (control.h - h) / 2.0)
         } else {
-            control.y - px(4.0) - h
+            let below = control.y + control.h + px(4.0);
+            let y = if below + h <= self.size.1 {
+                below
+            } else {
+                control.y - px(4.0) - h
+            };
+            (control.x, y)
         };
+        let x = x.min(self.size.0 - w).max(0.0);
+        let y = y.min(self.size.1 - h).max(0.0);
         scene.set_clip(None);
         let radius = px(self.theme.radius);
         shadow(scene, Area { x, y, w, h }, radius, self.scale, self.theme.shadow);
@@ -1522,10 +1539,8 @@ mod tests {
         let t = Theme::default();
         let (g, bar) = (t.gutter, t.row_height + 2.0 * t.padding);
         assert_eq!((area.x, area.y), (g, g + bar + g));
-        assert_eq!(
-            (area.w, area.h),
-            (1000.0 - RIGHT_WIDTH - 3.0 * g, 600.0 - bar - 3.0 * g)
-        );
+        // The column takes a quarter of a window this narrow.
+        assert_eq!((area.w, area.h), (1000.0 - 250.0 - 3.0 * g, 600.0 - bar - 3.0 * g));
         let (bar_x, bar_y) = at(&w, "Count");
         assert!(bar_y < g + bar && bar_x < 100.0);
         assert!(at(&w, "Replay").0 > area.w);

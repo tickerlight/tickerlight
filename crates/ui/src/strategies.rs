@@ -759,13 +759,13 @@ impl StrategyPanel {
             if ui.button("Keep the test apart") {
                 again = Some(false);
             }
-            ui.tip("Back to the bars before it, to choose the settings on");
+            ui.tip("Back to choosing on the bars before it");
         } else {
             ui.label_colored("The strategy has not seen these bars", muted);
             if ui.button("Run the test") {
                 again = Some(true);
             }
-            ui.tip("Over the test's bars too, once the settings are chosen: how it does on bars it was not fitted to");
+            ui.tip("On bars it was not fitted to");
         }
         if self.looks > 0 {
             ui.value("Test runs", &self.looks.to_string(), None);
@@ -869,10 +869,10 @@ impl StrategyPanel {
                 if number_fields(ui, &mut lost, &mut self.lost_fields, &mut self.lost_editing) {
                     self.stop_lost = self.stop_lost.clamp(0.0, 100.0);
                 }
-                ui.tip("It stops and closes all once the account has lost this share since it started; 0 for never");
+                ui.tip("Stops and closes all past this loss; 0 never");
                 if on_live(chart) {
                     start = ui.button("Trade it on paper");
-                    ui.tip("From the bar forming now, on this chart's paper account: its orders and position are the chart's, as if placed by hand");
+                    ui.tip("On this chart's paper account, from now");
                 } else {
                     ui.label_colored("On a live chart it trades by itself on paper", muted);
                 }
@@ -901,7 +901,7 @@ impl StrategyPanel {
                     ui.value("Their prices apart", &format!("{:.3}%", compared.off * 100.0), None);
                 }
                 stop = ui.button("Stop it and close all");
-                ui.tip("Takes off every order of the chart's account and closes its position at the last price");
+                ui.tip("Cancels its orders, closes at the last price");
             }
         }
         if start {
@@ -924,7 +924,7 @@ impl StrategyPanel {
             self.training = self.training.clamp(0.5, 20.0);
             self.walk = None;
         }
-        ui.tip("Each test window comes after a training window this many times as long");
+        ui.tip("Training is this many test windows long");
         let (bars, _) = settled(chart);
         // It chooses settings, so it stays before the test.
         let bars = match self.test_from(bars) {
@@ -1146,7 +1146,7 @@ impl<C> Panel<C> for StrategyPanel {
                 changed = true;
             }
             write = ui.button("Write the bars for training");
-            ui.tip("The 6 numbers a model reads at each bar and whether the next close was higher, as CSV beside the strategies (only the bars before the test, when one is kept). A model trained on them elsewhere, put there as an ONNX file that gives the chance of a higher close (or a classifier's two chances, without a ZipMap), trades as a strategy");
+            ui.tip("The bars' features as CSV, to train a model");
             let (muted, down) = (ui.theme().muted, ui.theme().down);
             match &self.written {
                 Some(Ok(path)) => ui.label_colored(&format!("Written to {path}"), muted),
@@ -1182,7 +1182,7 @@ impl<C> Panel<C> for StrategyPanel {
         drop(settings);
         let mut share = [("Test on the last %", &mut self.test)];
         let test_changed = number_fields(ui, &mut share, &mut self.test_fields, &mut self.test_editing);
-        ui.tip("Bars at the end kept apart: the strategy does not see them until the test is run");
+        ui.tip("Last bars kept unseen until the test");
         if test_changed {
             self.test = self.test.clamp(0.0, 90.0);
             (self.tested, self.looks) = (false, 0);
@@ -1200,7 +1200,7 @@ impl<C> Panel<C> for StrategyPanel {
             if ui.button("Run on the chart") {
                 self.run(chart, Again::Fresh);
             }
-            ui.tip("Trades the bars the chart shows, a bar at a time");
+            ui.tip("Trades the bars shown, one at a time");
         } else {
             if switched || test_changed {
                 self.run(chart, Again::Fresh);
@@ -1282,7 +1282,7 @@ impl<C> Panel<C> for StrategyPanel {
         ui.section("Trades");
         let watching = self.watch.is_some();
         let watch = ui.button(if watching { "Stop watching" } else { "Watch it trade" });
-        ui.tip("Plays each trade from a little before it goes in to its exit, skipping the time between");
+        ui.tip("Plays each trade, skipping the time between");
         let (mut previous, mut next) = (false, false);
         ui.columns(2, |ui| {
             previous = ui.button("Previous trade");
@@ -1291,7 +1291,7 @@ impl<C> Panel<C> for StrategyPanel {
         if ui.toggle("Pause at each loss", self.pause.loss) {
             self.pause.loss = !self.pause.loss;
         }
-        ui.tip("While watching, at the exit of a losing trade");
+        ui.tip("While watching, after a losing trade");
         let mut pauses = [
             ("Pause past bars held", &mut self.pause.held),
             ("Pause past % lost", &mut self.pause.lost),
@@ -1339,7 +1339,7 @@ impl<C> Panel<C> for StrategyPanel {
                 }
                 marked = self.marked();
             }
-            ui.tip("Kept by when it went in: after a change of settings, see whether it is still there");
+            ui.tip("Kept by entry across setting changes");
         }
         let n = trades.len();
         let clicked = if trades.is_empty() {

@@ -89,8 +89,10 @@ impl Layer for AxesLayer {
 
         let (ticks, decimals) = price_ticks(ctx.price, plot_h, ctx.scale);
         for (price, y) in ticks {
-            // A label half cut off by the plot edge looks broken; leave it out.
-            if y < font_size / 2.0 || y > plot_h - font_size / 2.0 {
+            // A label half cut off by the plot edge looks broken, and one right at a pane's edge runs into the next
+            // pane's (RSI's "0" over the equity's "0"); leave those out.
+            let margin = font_size * 0.8;
+            if y < margin || y > plot_h - margin {
                 continue;
             }
             if boxes

@@ -156,11 +156,11 @@ pub fn sessions_panel(ui: &mut Ui, chart: &mut Chart, p: &mut Program) {
     });
     let expectancy = sum.expectancy();
     ui.value("Per trade", &or_dash(expectancy), expectancy.map(color));
-    ui.tip("What a trade made on average after fees: what the next is worth if they go on as they went");
+    ui.tip("Average result after fees");
     // A row of its own: the runs need more room than half a narrow column.
     let streaks = format!("{} won, {} lost", sum.win_streak, sum.loss_streak);
     ui.value("In a row", &streaks, None);
-    ui.tip("The longest runs of wins and of losses in a session");
+    ui.tip("Longest runs of wins and losses");
 
     ui.section("By hour");
     if by_hour.is_empty() {
@@ -189,7 +189,7 @@ pub fn sessions_panel(ui: &mut Ui, chart: &mut Chart, p: &mut Program) {
     // Choices of one's own for every trade, like a grade or a mistake: picked in the trades table.
     ui.section("Journal columns");
     let field = ui.text_field(&mut p.columns_text, 0.0, "Grade: A, B, C; Mistake: early, late");
-    ui.tip("A name, a colon and its choices; columns apart with semicolons. The same in every session");
+    ui.tip("Name: choices; columns apart with ;");
     if field.changed {
         p.columns = JournalColumns::parse(&p.columns_text);
     }

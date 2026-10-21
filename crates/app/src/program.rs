@@ -28,9 +28,9 @@ use tickerlight_kraken::Kraken;
 use tickerlight_kucoin::Kucoin;
 use tickerlight_okx::Okx;
 use tickerlight_ui::panels::{
-    ContextMenuPanel, DrawToolsPanel, DrawingStylePanel, GO_TO, Journal, JournalColumns, OrderPanel, PositionPanel,
-    RangePanel, ReplayButton, ReplayPanel, ReplayPlayer, Review, ScalePanel, StatsPanel, Tape, TimeframePanel,
-    ToolsPanel, TradesPanel,
+    AddIndicator, ContextMenuPanel, DrawToolsPanel, DrawingStylePanel, GO_TO, Journal, JournalColumns, OrderPanel,
+    PositionPanel, RangePanel, ReplayButton, ReplayPanel, ReplayPlayer, Review, ScalePanel, StatsPanel, Tape,
+    TimeframePanel, ToolsPanel, TradesPanel,
 };
 use tickerlight_ui::{
     Dock, Icon, IndicatorsPanel, Layout, Panel, SEARCH_INDICATORS, StrategyFiles, StrategyPanel, Theme, Ui, Workspace,
@@ -598,7 +598,7 @@ fn interval_panel(ui: &mut Ui, chart: &mut Chart, p: &mut Program) {
     ui.space(8.0);
     ui.heading("Interval");
     let field = ui.text_field(text, 80.0, INTERVAL);
-    ui.tip("Minutes like 15, or 30s, 4h, 1d; then Enter");
+    ui.tip("Like 15, 30s, 4h or 1d, then Enter");
     if field.submitted {
         match timeframe_of(chart, text) {
             Ok(span) => chart.set_timeframe(span),
@@ -620,7 +620,7 @@ fn symbol_panel(ui: &mut Ui, _: &mut Chart, p: &mut Program) {
         ui.text_field(&mut p.symbol, 110.0, SYMBOL_FIELD)
     };
     if file {
-        ui.tip("The path of a CSV file of candles or trades, or a symbol imported before");
+        ui.tip("A CSV file's path, or a symbol imported before");
     }
     // A click in the field opens the list of symbols beside the chart: what to pick from shows before anything
     // is typed.
@@ -683,36 +683,17 @@ fn symbol_panel(ui: &mut Ui, _: &mut Chart, p: &mut Program) {
 /// The pages of the side column as icons at the window's edge; a click on the page shown folds the column.
 fn page_strip(ui: &mut Ui, _: &mut Chart, p: &mut Program) {
     let pages = [
-        (
-            Icon::List,
-            "Watchlist",
-            "Watchlist: symbols with their prices",
-            Page::Watchlist,
-        ),
-        (
-            Icon::Trade,
-            "Trade",
-            "Trade: the order ticket, the position, the statistics",
-            Page::Trade,
-        ),
-        (
-            Icon::Strategy,
-            "Strategy",
-            "Strategy: run one over the bars",
-            Page::Strategy,
-        ),
-        (
-            Icon::Journal,
-            "Sessions",
-            "Sessions: the journal of the trades",
-            Page::Sessions,
-        ),
+        (Icon::List, "Watchlist", Page::Watchlist),
+        (Icon::Trade, "Trade", Page::Trade),
+        (Icon::Strategy, "Strategy", Page::Strategy),
+        (Icon::Journal, "Sessions", Page::Sessions),
     ];
-    for (icon, name, tip, page) in pages {
+    // The tips are the pages' plain names, as the tools' are.
+    for (icon, name, page) in pages {
         if ui.icon_button(icon, name, p.page == Some(page)) {
             p.page = if p.page == Some(page) { None } else { Some(page) };
         }
-        ui.tip(tip);
+        ui.tip(name);
     }
 }
 
@@ -734,7 +715,7 @@ fn page_panel(ui: &mut Ui, _: &mut Chart, p: &mut Program) {
             ui.focus(SEARCH_INDICATORS);
         }
     }
-    ui.tip("The indicators on the chart and those to add. Key /");
+    ui.tip("Indicators (/)");
     let at = Layout::ALL.iter().position(|&l| l == p.layout).unwrap_or(0);
     let [one, columns, rows, grid] = Layout::ALL.map(Layout::label);
     let [a, b, c, d] = Layout::ALL.map(Layout::icon);
@@ -745,7 +726,7 @@ fn page_panel(ui: &mut Ui, _: &mut Chart, p: &mut Program) {
         Some(_) => p.apart = !p.apart,
         None => {}
     }
-    ui.tip("Layout: how many charts the window shows, and how they are placed; a chart in a window of its own");
+    ui.tip("Layout");
     let look_icon = |look| match look {
         Look::Dark => Icon::Moon,
         Look::Light => Icon::Sun,
@@ -755,7 +736,8 @@ fn page_panel(ui: &mut Ui, _: &mut Chart, p: &mut Program) {
     if let Some(pick) = ui.icon_menu(look_icon(p.look), LOOKS, Some(at), &names, &icons) {
         p.look = Look::ALL[pick];
     }
-    ui.tip("Look: the window dark or light");
+    // The end of the top bar, where an about box would be: the version a bug report asks for.
+    ui.tip(&format!("Look (Tickerlight {})", env!("CARGO_PKG_VERSION")));
 }
 
 /// The strategies to choose from. One's own goes here: a type that implements [`Strategy`]; or, with no rebuild,
@@ -2747,6 +2729,19 @@ impl Window {
             .is_some()
         {
             self.workspace.ctx.page = Some(Page::Indicators);
+            redraw = true;
+        }
+        // "Add indicator…" in the chart's menu: the indicators to add, the search taking the keys, as "/" opens them.
+        if self
+            .workspace
+            .chart_mut()
+            .resources_mut()
+            .remove::<AddIndicator>()
+            .is_some()
+        {
+            self.workspace.ctx.page = Some(Page::Indicators);
+            self.show_docks();
+            self.workspace.type_into(SEARCH_INDICATORS, None);
             redraw = true;
         }
         // A replay is for trading: its start shows the order ticket, unless a page that works with the replay

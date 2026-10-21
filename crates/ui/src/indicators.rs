@@ -33,11 +33,22 @@ impl<C> Panel<C> for IndicatorsPanel {
         let mut items = studies(chart).to_vec();
         let before = items.clone();
         ui.section("Add");
-        let field = ui.text_field(&mut self.search, 0.0, SEARCH_INDICATORS);
-        ui.tip("Click or press / to pick an indicator to add; Enter adds the first found");
-        self.open = (self.open || field.gained || field.changed) && !field.cancelled;
+        // While the list to add from shows, "Done" sits beside the search, filled as the page's one action: not a
+        // row of the list, where it looked like one more indicator.
+        let (mut field, mut done) = Default::default();
+        let weights: &[f32] = if self.open { &[3.0, 1.0] } else { &[1.0] };
+        ui.columns_weighted(weights, |ui| {
+            field = ui.text_field(&mut self.search, 0.0, SEARCH_INDICATORS);
+            ui.tip("Enter adds the first found (/)");
+            if self.open {
+                let accent = ui.theme().accent;
+                done = ui.button_colored(CLOSE_LIST, accent);
+                ui.tip("Back to the chart's indicators (Esc)");
+            }
+        });
+        self.open = (self.open || field.gained || field.changed) && !field.cancelled && !done;
         // Esc puts the list away with what was typed for it.
-        if field.cancelled {
+        if field.cancelled || done {
             self.search.clear();
         }
         // The list to pick from takes the page until one is picked.
@@ -57,9 +68,9 @@ impl<C> Panel<C> for IndicatorsPanel {
                     picked = true;
                 }
                 ui.tip(if kind.own_pane() {
-                    "Adds it in a pane of its own"
+                    "In a pane of its own"
                 } else {
-                    "Adds it over the candles"
+                    "Over the candles"
                 });
             }
             if picked {
@@ -68,10 +79,6 @@ impl<C> Panel<C> for IndicatorsPanel {
             if shown == 0 {
                 ui.heading("Nothing by that name");
             }
-            if ui.button(CLOSE_LIST) {
-                (self.open, self.search) = (false, String::new());
-            }
-            ui.tip("Back to the indicators on the chart. Esc in the search");
             if items != before {
                 set_studies(chart, items);
             }
@@ -94,7 +101,7 @@ impl<C> Panel<C> for IndicatorsPanel {
                         let at = STUDY_COLORS.iter().position(|&c| c == study.color);
                         study.color = STUDY_COLORS[at.map_or(0, |a| (a + 1) % STUDY_COLORS.len())];
                     }
-                    ui.tip("Click for the next color");
+                    ui.tip("Next color");
                 }
                 ui.label(study.kind.title());
                 let (eye, name) = if study.hidden {

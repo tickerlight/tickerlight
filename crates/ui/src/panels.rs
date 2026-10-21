@@ -83,14 +83,41 @@ impl TimeframePanel {
     }
 }
 
+/// How wide the top bar has to be (logical pixels) for a button per timeframe; narrower, they fold into a menu.
+const FOLD_TIMEFRAMES: f32 = 1100.0;
+
 impl<C> Panel<C> for TimeframePanel {
     fn ui(&mut self, ui: &mut Ui, chart: &mut Chart, _: &mut C) {
         let Some(native) = native_step(chart.base()).filter(|&s| s > 0) else {
             return;
         };
-        let tip = "The length of a bar. Type digits over the chart for any other: 15, 30s, 4h, 1d";
+        let tip = "Bar length; or type 15, 4h on the chart";
         self.make(native, chart.resources().get::<Tape>().is_some_and(|t| t.0));
         let current = chart.timeframe();
+        // A narrow bar folds them into one menu showing the one in use, as TradingView does: the bar stays a row.
+        if ui.width() < FOLD_TIMEFRAMES {
+            let (s, n) = (self.seconds.len(), self.seconds.len() + self.spans.len());
+            let span = |i: usize| {
+                if i < s {
+                    Some(self.seconds[i])
+                } else {
+                    self.spans[i - s]
+                }
+            };
+            let labels: [&str; SECONDS.len() + TIMEFRAMES.len() + 1] = std::array::from_fn(|i| match i {
+                _ if i < s => self.seconds_labels[i].as_str(),
+                _ if i < n => self.labels[i - s].as_str(),
+                _ => "",
+            });
+            let labels = &labels[..n];
+            let at = (0..n).position(|i| span(i) == current);
+            let label = at.map_or(SECONDS_MENU, |i| labels[i]);
+            if let Some(pick) = ui.menu_button(label, at, labels) {
+                chart.set_timeframe(span(pick));
+            }
+            ui.tip(tip);
+            return;
+        }
         if !self.seconds.is_empty() {
             let labels: [&str; SECONDS.len()] = std::array::from_fn(|i| self.seconds_labels.get(i).map_or("", |l| l));
             let labels = &labels[..self.seconds.len()];
@@ -99,7 +126,7 @@ impl<C> Panel<C> for TimeframePanel {
             if let Some(pick) = ui.menu_choice(label, at, labels) {
                 chart.set_timeframe(Some(self.seconds[pick]));
             }
-            ui.tip("Bars of seconds, made of the trades");
+            ui.tip("Bars of seconds, from trades");
         }
         let labels: [&str; TIMEFRAMES.len() + 1] = std::array::from_fn(|i| self.labels.get(i).map_or("", |l| l));
         let labels = &labels[..self.labels.len()];
@@ -140,10 +167,9 @@ impl<C> Panel<C> for ReplayButton {
             );
         }
         ui.tip(if replay.active {
-            "Leave the replay: all the data again, the trades kept"
+            "Leave the replay, trades kept"
         } else {
-            "Go back to a moment in history and move forward bar by bar, trading as if it were live. Then click \
-             a bar, or type a date under the chart"
+            "Replay history bar by bar (Alt+Shift+P)"
         });
     }
 }
@@ -272,21 +298,21 @@ impl<C> Panel<C> for ReplayPlayer {
             if ui.button(if replay.playing { "Pause" } else { "Play" }) {
                 command(chart, commands::REPLAY_PLAY_PAUSE);
             }
-            ui.tip("Space");
+            ui.tip("Play or pause (Space)");
             if ui.button("Step") {
                 command(chart, commands::REPLAY_STEP);
             }
-            ui.tip("One bar. Shift+Right arrow");
+            ui.tip("One bar (Shift+Right)");
             if ui.button("Slower") {
                 command(chart, commands::REPLAY_SLOWER);
             }
-            ui.tip("Down arrow or -");
+            ui.tip("Slower (Down or -)");
             ui.heading(&speed_label(replay.speed));
-            ui.tip(&format!("{}× real time while playing", replay.speed));
+            ui.tip(&format!("{}× real time", replay.speed));
             if ui.button("Faster") {
                 command(chart, commands::REPLAY_FASTER);
             }
-            ui.tip("Up arrow or +");
+            ui.tip("Faster (Up or +)");
             if clock.blind
                 && ui.button("Show the date")
                 && let Some(replay) = chart.resources_mut().get_mut::<Replay>()
@@ -298,7 +324,7 @@ impl<C> Panel<C> for ReplayPlayer {
             if ui.button("Exit replay") {
                 command(chart, commands::REPLAY_TOGGLE);
             }
-            ui.tip("Back to all the data, the trades kept");
+            ui.tip("Back to all the data, trades kept");
             if let Some(error) = &self.error {
                 let down = ui.theme().down;
                 ui.label_colored(error, down);
@@ -320,7 +346,7 @@ impl<C> Panel<C> for ReplayPlayer {
             if ui.button("Cancel") {
                 command(chart, commands::CANCEL);
             }
-            ui.tip("Esc");
+            ui.tip("Stop picking (Esc)");
             if let Some(error) = &self.error {
                 let down = ui.theme().down;
                 ui.label_colored(error, down);
@@ -353,7 +379,7 @@ fn random_start(ui: &mut Ui, chart: &mut Chart) {
             replay.blind = true;
         }
     }
-    ui.tip("At a moment picked at random, its date hidden until the replay ends or reaches the last bar");
+    ui.tip("A random moment, its date hidden");
 }
 
 impl<C> Panel<C> for ReplayPanel {
@@ -381,12 +407,12 @@ impl<C> Panel<C> for ReplayPanel {
         if ui.toggle("Pause at price lines", stops.lines) {
             stops.lines = !stops.lines;
         }
-        ui.tip("Playing pauses when the price reaches a horizontal line drawn on the chart");
+        ui.tip("Pause where the price meets a line");
         let mut to_clock = false;
         let mut typo = false;
         ui.columns(2, |ui| {
             let field = ui.text_field(&mut self.clock, 0.0, "Pause at time");
-            ui.tip("Like 09:30, on the chart's clock: playing pauses there each day");
+            ui.tip("Like 09:30: pause there every day");
             match clock_minutes(&self.clock) {
                 Some(clock) if field.changed => stops.clock = clock,
                 // Not being typed in, it shows the time kept (one from a session too).
@@ -396,7 +422,7 @@ impl<C> Panel<C> for ReplayPanel {
             }
             if on && stops.clock.is_some() {
                 to_clock = ui.button("Play to it");
-                ui.tip("At once, to the next time the clock reads it");
+                ui.tip("Play on to that time at once");
             }
         });
         if stops != replay.stops
@@ -447,25 +473,19 @@ pub fn tool_icon(tool: Tool) -> Icon {
     }
 }
 
-/// How a tool is used, for its tip.
+/// A tool's tip: its name, and its key when it has one.
 fn tool_tip(tool: Tool) -> String {
-    let how = match tool.clicks() {
-        1 if tool == Tool::Text => "click, then type",
-        1 => "click",
-        2 => "click two points or drag",
-        _ => "two points, then a third for the width",
-    };
     let key = match tool {
-        Tool::Trend => ". Alt+T",
-        Tool::HLine => ". Alt+H",
-        Tool::HRay => ". Alt+J",
-        Tool::VLine => ". Alt+V",
-        Tool::Cross => ". Alt+C",
-        Tool::Rect => ". Alt+Shift+R",
-        Tool::Fib => ". Alt+F",
+        Tool::Trend => " (Alt+T)",
+        Tool::HLine => " (Alt+H)",
+        Tool::HRay => " (Alt+J)",
+        Tool::VLine => " (Alt+V)",
+        Tool::Cross => " (Alt+C)",
+        Tool::Rect => " (Alt+Shift+R)",
+        Tool::Fib => " (Alt+F)",
         _ => "",
     };
-    format!("{}: {how}{key}", tool.title())
+    format!("{}{key}", tool.title())
 }
 
 /// The tools of the left column, in groups, with what the list of each group's tools is found by.
@@ -493,7 +513,7 @@ impl<C> Panel<C> for DrawToolsPanel {
         if ui.icon_button(Icon::Cursor, CURSOR, tool.is_none()) {
             command(chart, commands::CANCEL);
         }
-        ui.tip("Select and move drawings; with Shift or Ctrl, click or box more. Esc");
+        ui.tip("Select and move; Shift adds (Esc)");
         for (group, (more, tools)) in TOOL_GROUPS.iter().enumerate() {
             // A tool picked by a key shows in its group too.
             if let Some(at) = tools.iter().position(|&t| Some(t) == tool) {
@@ -524,7 +544,7 @@ impl<C> Panel<C> for DrawToolsPanel {
         if ui.icon_button(Icon::Magnet, MAGNET, magnet) {
             command(chart, commands::DRAW_MAGNET);
         }
-        ui.tip("Magnet: points snap to the open, high, low or close of the bar");
+        ui.tip("Snap to the bar's prices");
         let eye = if hidden { Icon::EyeOff } else { Icon::Eye };
         if ui.icon_button(eye, HIDE, hidden) {
             command(chart, commands::DRAW_HIDE);
@@ -537,7 +557,7 @@ impl<C> Panel<C> for DrawToolsPanel {
         if ui.icon_button(Icon::Trash, REMOVE_ALL, false) {
             command(chart, commands::DRAW_CLEAR);
         }
-        ui.tip("Remove all drawings. Ctrl+Z brings them back");
+        ui.tip("Remove all drawings (Ctrl+Z undoes)");
     }
 }
 
@@ -620,7 +640,7 @@ impl<C> Panel<C> for DrawingStylePanel {
         if ui.icon_button(Icon::Clone, CLONE_DRAWING, false) {
             command(chart, commands::DRAW_CLONE);
         }
-        ui.tip("A copy beside it. Or drag the drawing with Ctrl held; Ctrl+C and Ctrl+V copy it too");
+        ui.tip("Clone (Ctrl+drag, Ctrl+C, Ctrl+V)");
         let (icon, name) = if d.locked {
             (Icon::Lock, UNLOCK_DRAWING)
         } else {
@@ -629,15 +649,11 @@ impl<C> Panel<C> for DrawingStylePanel {
         if ui.icon_button(icon, name, d.locked) {
             command(chart, commands::DRAW_LOCK);
         }
-        ui.tip(if d.locked {
-            "Locked: it stays where it is. Click to unlock"
-        } else {
-            "Lock it where it is"
-        });
+        ui.tip(if d.locked { "Unlock" } else { "Lock in place" });
         if ui.icon_button(Icon::Trash, DELETE_DRAWING, false) {
             command(chart, commands::DRAW_DELETE);
         }
-        ui.tip("Delete the drawing. Key Delete");
+        ui.tip("Delete (Delete)");
     }
 }
 
@@ -654,7 +670,7 @@ impl<C> Panel<C> for ToolsPanel {
         if ui.dropdown(&mut index, &SERIES_KINDS) {
             chart.resources_mut().insert(SeriesKind::ALL[index]);
         }
-        ui.tip("How the prices are drawn");
+        ui.tip("Chart type");
     }
 }
 
@@ -680,7 +696,7 @@ impl<C> Panel<C> for ScalePanel {
             };
             panes.set_scale(0, next);
         }
-        ui.tip("Percent from the first bar on screen. Alt+P");
+        ui.tip("Percent from the first bar (Alt+P)");
         if ui.toggle(SCALE_LOG, scale == ScaleSetting::Log) {
             let next = if scale == ScaleSetting::Log {
                 ScaleSetting::Linear
@@ -689,12 +705,12 @@ impl<C> Panel<C> for ScalePanel {
             };
             panes.set_scale(0, next);
         }
-        ui.tip("Log scale: equal moves in percent look equal. Alt+L");
+        ui.tip("Log scale (Alt+L)");
         let auto = panes.manual_range(0).is_none();
         if ui.toggle(SCALE_AUTO, auto) && !auto {
             panes.set_manual_range(0, None);
         }
-        ui.tip("Fit the prices on screen. Drag the price axis to scale by hand");
+        ui.tip("Fit the prices on screen");
     }
 }
 
@@ -711,7 +727,11 @@ enum MenuAction {
     HideDrawings,
     ShowDrawings,
     RemoveDrawings,
+    /// The indicators to add, as "/" opens them: asked of the window by [`AddIndicator`].
+    AddIndicator,
     RemoveIndicators,
+    /// The selected drawing's style row, faded in again to show where it is.
+    Style,
     Clone,
     Lock,
     Unlock,
@@ -735,7 +755,9 @@ impl MenuAction {
             Self::HideDrawings => "Hide drawings".into(),
             Self::ShowDrawings => "Show drawings".into(),
             Self::RemoveDrawings => "Remove drawings".into(),
+            Self::AddIndicator => "Add indicator…\t/".into(),
             Self::RemoveIndicators => "Remove indicators".into(),
+            Self::Style => "Style…".into(),
             Self::Clone => "Clone\tCtrl+drag".into(),
             Self::Lock => "Lock".into(),
             Self::Unlock => "Unlock".into(),
@@ -747,6 +769,11 @@ impl MenuAction {
         }
     }
 }
+
+/// A chart resource: the chart's menu asked for the indicators to add; the window opens their page with the search
+/// taking the keys, as "/" does, and takes this away.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AddIndicator;
 
 /// The menu a right press over the chart opens where it was: on a drawing what to do with it, on the price axis
 /// that pane's scale, elsewhere the view, the price there, the drawings and the indicators.
@@ -777,6 +804,10 @@ impl ContextMenuPanel {
         let drawings = chart.resources().get::<Drawings>();
         if let Some(d) = drawings.and_then(Drawings::selection) {
             let lock = if d.locked { MenuAction::Unlock } else { MenuAction::Lock };
+            // As TradingView's "Settings…": here the colors, widths and sizes are the row over the chart.
+            if d.tool.styled() || d.tool == Tool::Text {
+                self.actions.push(MenuAction::Style);
+            }
             self.actions.extend([MenuAction::Clone, lock, MenuAction::Remove]);
             return None;
         }
@@ -803,6 +834,7 @@ impl ContextMenuPanel {
                     .extend([MenuAction::Order(buy, qty, at), MenuAction::Order(sell, -qty, at)]);
             }
         }
+        self.actions.push(MenuAction::AddIndicator);
         if let Some(d) = drawings.filter(|d| !d.items.is_empty()) {
             let hide = if d.hidden {
                 MenuAction::ShowDrawings
@@ -851,7 +883,11 @@ impl ContextMenuPanel {
             }
             MenuAction::HideDrawings | MenuAction::ShowDrawings => command(chart, commands::DRAW_HIDE),
             MenuAction::RemoveDrawings => command(chart, commands::DRAW_CLEAR),
+            MenuAction::AddIndicator => {
+                chart.resources_mut().insert(AddIndicator);
+            }
             MenuAction::RemoveIndicators => set_studies(chart, Vec::new()),
+            MenuAction::Style => ui.fade_in(crate::Dock::Float),
             MenuAction::Clone => command(chart, commands::DRAW_CLONE),
             MenuAction::Lock | MenuAction::Unlock => command(chart, commands::DRAW_LOCK),
             MenuAction::Remove => command(chart, commands::DRAW_DELETE),
@@ -892,6 +928,10 @@ pub const RANGES: [(&str, Option<i64>); 9] = [
 
 /// The hint of the field that scrolls the chart to a date.
 pub const GO_TO: &str = "Go to date";
+/// What the menu the ranges fold into on a narrow row is found by.
+pub const RANGE_MENU: &str = "Range";
+/// How wide the row under the chart has to be (logical pixels) for a button per range.
+const FOLD_RANGES: f32 = 760.0;
 
 /// What the chart shows: a span of time ending at the newest bar, or the bars around a date typed in.
 #[derive(Default)]
@@ -919,21 +959,31 @@ fn show_since(chart: &mut Chart, from: Option<Time>) {
 impl<C> Panel<C> for RangePanel {
     fn ui(&mut self, ui: &mut Ui, chart: &mut Chart, _: &mut C) {
         let last = chart.seen().time().last().copied();
-        for (label, span) in RANGES {
-            if ui.button(label)
-                && let Some(last) = last
-            {
-                let from = match span {
-                    Some(0) => None,
-                    Some(span) => Some(Time(last.0 - span)),
-                    None => parse_time(&format!("{}-01-01", DateTime::from_time(last).year)),
-                };
-                show_since(chart, from);
+        // A narrow row folds them into one menu, so the row stays one.
+        let picked = if ui.width() < FOLD_RANGES {
+            let r = ui.menu_button(RANGE_MENU, None, &RANGES.map(|(label, _)| label));
+            ui.tip("Time range to show");
+            r
+        } else {
+            let mut picked = None;
+            for (i, (label, _)) in RANGES.iter().enumerate() {
+                if ui.button(label) {
+                    picked = Some(i);
+                }
             }
+            picked
+        };
+        if let (Some(i), Some(last)) = (picked, last) {
+            let from = match RANGES[i].1 {
+                Some(0) => None,
+                Some(span) => Some(Time(last.0 - span)),
+                None => parse_time(&format!("{}-01-01", DateTime::from_time(last).year)),
+            };
+            show_since(chart, from);
         }
         ui.separator();
         let field = ui.text_field(&mut self.date, 110.0, GO_TO);
-        ui.tip("Like 2026-09-15 or 2026-09-15 14:00, then Enter. Alt+G");
+        ui.tip("Like 2026-09-15 14:00 (Alt+G)");
         if field.changed {
             self.error = None;
         }
@@ -1262,7 +1312,7 @@ impl<C> Panel<C> for OrderPanel {
             ui.heading("Break-even at");
             ui.text_field(&mut self.break_even, 0.0, "none");
         });
-        ui.tip("Once the price reaches it, the stop loss moves to the entry");
+        ui.tip("The stop moves to the entry here");
         // What the order comes to: its quantity, its value and what it loses at the stop.
         let account = chart.resources().get::<Account>().cloned().unwrap_or_default();
         let (entry, stop) = self.entry_and_stop(last);
@@ -1384,10 +1434,7 @@ impl<C> Panel<C> for PositionPanel {
                 };
                 let field = ui.text_field(&mut text, 0.0, "Order price");
                 let side = if buy { "Buys" } else { "Sells" };
-                ui.tip(&format!(
-                    "{side} {} at this price; type another and press Enter to move it",
-                    order.qty.abs()
-                ));
+                ui.tip(&format!("{side} {}; type a price to move it", order.qty.abs()));
                 if field.submitted {
                     moved = text.trim().parse::<f64>().ok().map(|p| (i, p));
                 } else if field.focused {
@@ -1408,7 +1455,7 @@ impl<C> Panel<C> for PositionPanel {
                     if ui.toggle("Break-even", on) {
                         break_even = Some((i, if on { None } else { one_r }));
                     }
-                    ui.tip("Moves this stop to the entry once the price reaches its line (drag it on the chart)");
+                    ui.tip("Stop to the entry at its line");
                     ui.heading(&order.break_even.map_or("at 1R".into(), |t| format!("at {}", price(t))));
                 });
             }
@@ -1501,7 +1548,7 @@ impl<C> Panel<C> for StatsPanel {
                 self.slippage = format!("{}", (slippage * 1e8).round() / 1e6);
             }
             let field = ui.text_field(&mut self.slippage, 0.0, "Slippage");
-            ui.tip("How much worse than the price market and stop orders fill, in % of it");
+            ui.tip("Worse fills of market and stop orders, %");
             self.slippage_focused = field.focused;
             if field.changed {
                 new_slippage = self
@@ -1542,11 +1589,11 @@ impl<C> Panel<C> for StatsPanel {
             &expectancy.map_or("-".into(), money),
             expectancy.and_then(tint),
         );
-        ui.tip("What a trade made on average after fees");
+        ui.tip("Average result after fees");
         // A row of its own: the runs need more room than half a narrow column.
         let streaks = format!("{} won, {} lost", stats.win_streak, stats.loss_streak);
         ui.value("In a row", &streaks, None);
-        ui.tip("The longest runs of wins and of losses");
+        ui.tip("Longest runs of wins and losses");
         let dd = format!("{:.2} ({:.2}%)", stats.max_drawdown, stats.max_drawdown_share * 100.0);
         ui.value("Max drawdown", &dd, None);
 
@@ -1951,7 +1998,7 @@ impl<C> Panel<C> for TradesPanel {
                 self.selected = None;
                 return;
             }
-            ui.tip("To where the replay was, with the session's trades and orders");
+            ui.tip("Back to the replay and its trades");
         } else {
             let (mut note, mut tags) = Default::default();
             ui.columns(2, |ui| {
@@ -2009,7 +2056,7 @@ impl<C> Panel<C> for TradesPanel {
                     self.selected = None;
                     return;
                 }
-                ui.tip("From a little before it opened, then back to here");
+                ui.tip("From a little before it opened");
             }
         }
         // What each fill realized after its fees.
@@ -2375,10 +2422,26 @@ mod tests {
         let (x, y) = find(&w, "Trend line");
         w.handle(Event::PointerMoved { x, y });
         let texts = texts(&mut w);
-        let tip = "Trend line: click two points or drag. Alt+T";
+        let tip = "Trend line (Alt+T)";
         assert_eq!(w.ui_state().tip(), Some(tip));
         assert!(texts.contains(&tip.to_string()));
-        // At the right edge of the window the tip stays inside it.
+        // A click answers it: the tip goes, and stays away while the pointer is still on the control (it would
+        // cover what the click changed), until the pointer comes back.
+        click(&mut w, "1h");
+        w.build_scene(&mut Scene::new());
+        assert_eq!(w.ui_state().tip(), None, "after a click");
+        w.handle(Event::PointerMoved { x, y });
+        w.build_scene(&mut Scene::new());
+        let (hx, hy) = find(&w, "1h");
+        w.handle(Event::PointerMoved { x: hx, y: hy });
+        w.build_scene(&mut Scene::new());
+        assert!(w.ui_state().tip().is_some(), "back on it");
+        // A field taking the keys shows none: it would cover what is typed.
+        click(&mut w, GO_TO);
+        w.build_scene(&mut Scene::new());
+        assert_eq!(w.ui_state().tip(), None, "in the field");
+        w.handle(Event::Key(Key::Escape));
+        // A control of the side column has its tip beside it, toward the chart, not over the rows under it.
         let pause = w.ui_state().rect_of("Pause at price lines").unwrap();
         w.handle(Event::PointerMoved {
             x: pause.x + pause.w - 2.0,
@@ -2386,13 +2449,10 @@ mod tests {
         });
         let mut scene = Scene::new();
         w.build_scene(&mut scene);
-        let tip = scene
-            .texts
-            .iter()
-            .find(|t| t.text.starts_with("Playing pauses"))
-            .unwrap();
+        let tip = scene.texts.iter().find(|t| t.text.starts_with("Pause where")).unwrap();
         let width = tickerlight_core::Font::ui().measure(&tip.text, tip.size);
-        assert!(tip.x + width <= 1400.0, "{} + {width}", tip.x);
+        assert!(tip.x + width <= pause.x, "{} + {width} left of {}", tip.x, pause.x);
+        assert!(tip.y < pause.y + pause.h, "beside it, not under it");
         w.handle(Event::PointerMoved { x: 400.0, y: 400.0 });
         w.build_scene(&mut Scene::new());
         assert_eq!(w.ui_state().tip(), None, "over the chart");

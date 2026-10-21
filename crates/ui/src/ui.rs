@@ -82,7 +82,9 @@ pub struct UiState {
     /// Where each control was in the last pass, by its text.
     pub(crate) rects: Vec<(String, Area)>,
     /// The tip of the control under the pointer, and where that control is.
-    pub(crate) tip: Option<(String, Area)>,
+    pub(crate) tip: Option<Tip>,
+    /// The control last pressed: its tip stays away until the pointer leaves it, as the click answered it.
+    quiet: Option<Area>,
     /// How far each control has lit up under the pointer, from 0 to 1 over [`FADE`] seconds, and back when the
     /// pointer leaves it.
     glow: HashMap<Id, f32>,
@@ -92,6 +94,17 @@ pub struct UiState {
     pub(crate) context: Option<ContextAt>,
     /// A panel has work left and asked for another pass (see [`Ui::again`]).
     pub(crate) again: bool,
+    /// A dock a panel asked to fade in again, to show where something is (see [`Ui::fade_in`]).
+    pub(crate) fade: Option<crate::Dock>,
+}
+
+/// A control's tip and where it goes: under or over a control of a bar, beside one of a column (not over the
+/// column's next rows, a list to pick from say).
+#[derive(Debug, Clone)]
+pub(crate) struct Tip {
+    pub(crate) text: String,
+    pub(crate) control: Area,
+    pub(crate) beside: bool,
 }
 
 /// The list of a dropdown, open over everything under its button (beside it for a column's tools). A pick in it
@@ -160,7 +173,7 @@ impl UiState {
 
     /// The tip shown now, if any.
     pub fn tip(&self) -> Option<&str> {
-        self.tip.as_ref().map(|(t, _)| t.as_str())
+        self.tip.as_ref().map(|t| t.text.as_str())
     }
 
     pub(crate) fn begin_pass(&mut self) {
@@ -169,6 +182,11 @@ impl UiState {
         self.shape = PointerShape::Default;
         self.tip = None;
         self.again = false;
+        if let Some(quiet) = self.quiet
+            && !self.pointer.is_some_and(|p| quiet.contains(p))
+        {
+            self.quiet = None;
+        }
     }
 
     /// Moves the glow of the controls `dt` seconds on: the one under the pointer toward lit, the rest toward out.
@@ -528,22 +546,44 @@ impl<'a> Ui<'a> {
     }
 
     /// A tip for the control just laid out (what it does, its key), shown by it while the pointer is over it and no
-    /// dropdown list is open (it would cover the list).
+    /// dropdown list is open (it would cover the list). A press hides it until the pointer leaves the control, and
+    /// a field that takes the keys shows none: it would cover what is typed and the list it brings.
     pub fn tip(&mut self, text: &str) {
-        let shown = self.state.active.is_none()
+        let over = self
+            .state
+            .pointer
+            .is_some_and(|p| self.last.contains(p) && self.area.contains(p));
+        if over && self.event == Some(&Event::PointerDown) {
+            self.state.quiet = Some(self.last);
+        }
+        let shown = over
+            && self.state.active.is_none()
             && self.state.menu.is_none()
-            && self
-                .state
-                .pointer
-                .is_some_and(|p| self.last.contains(p) && self.area.contains(p));
+            && self.state.quiet != Some(self.last)
+            && self.state.focus != Some(self.next_id);
         if shown {
-            self.state.tip = Some((text.to_string(), self.last));
+            self.state.tip = Some(Tip {
+                text: text.to_string(),
+                control: self.last,
+                beside: !self.bar,
+            });
         }
     }
 
     /// Asks for another pass soon: the panel has work left that it does a part of in each pass.
     pub fn again(&mut self) {
         self.state.again = true;
+    }
+
+    /// Fades `dock` in again, as when it shows something new: a menu item that points at what is already there (the
+    /// drawing's style row) shows where it is.
+    pub fn fade_in(&mut self, dock: crate::Dock) {
+        self.state.fade = Some(dock);
+    }
+
+    /// How wide the panel's room is inside its padding, in logical pixels: what a bar folds its controls by.
+    pub fn width(&self) -> f32 {
+        self.inner.w / self.scale
     }
 
     pub fn theme(&self) -> &Theme {
@@ -845,15 +885,16 @@ impl<'a> Ui<'a> {
             && self.drawing()
         {
             let x = left + width * f;
-            self.state.tip = Some((
-                label(f),
-                Area {
+            self.state.tip = Some(Tip {
+                text: label(f),
+                control: Area {
                     x,
                     y: area.y,
                     w: 1.0,
                     h: area.h,
                 },
-            ));
+                beside: false,
+            });
         }
         let theme = *self.theme;
         let Some(scene) = &mut self.scene else {
