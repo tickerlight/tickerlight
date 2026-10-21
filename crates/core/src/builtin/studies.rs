@@ -576,6 +576,8 @@ pub struct Studies {
     items: Vec<Study>,
     /// The pane or layer of each, and the layer of its label.
     names: Vec<(&'static str, &'static str)>,
+    /// What each worked out, kept by the next [`set_studies`] for the ones it keeps.
+    caches: Vec<Rc<RefCell<Cache>>>,
 }
 
 impl Studies {
@@ -617,7 +619,7 @@ pub fn studies(chart: &Chart) -> &[Study] {
 
 /// Puts `items` on the chart in place of the indicators it has. A pane that stays keeps its height.
 pub fn set_studies(chart: &mut Chart, items: Vec<Study>) {
-    let old = chart.resources_mut().remove::<Studies>().unwrap_or_default();
+    let mut old = chart.resources_mut().remove::<Studies>().unwrap_or_default();
     let stack = chart.pane_stack();
     let weights: Vec<(&'static str, f32)> = (0..stack.len())
         .filter_map(|i| Some((stack.name(i)?, stack.weight(i)?)))
@@ -631,6 +633,7 @@ pub fn set_studies(chart: &mut Chart, items: Vec<Study>) {
         }
     }
     let mut names: Vec<(&'static str, &'static str)> = Vec::new();
+    let mut caches = Vec::new();
     let mut row = 0;
     for (index, study) in items.iter().enumerate() {
         let id = study.id();
@@ -642,7 +645,20 @@ pub fn set_studies(chart: &mut Chart, items: Vec<Study>) {
         }
         let (label, name) = (intern(&format!("{name} label")), intern(&name));
         names.push((name, label));
-        let cache = Rc::new(RefCell::new(Cache::default()));
+        // One that stays (or only changed its look) keeps what it worked out: only those added are worked out.
+        let kept = old
+            .items
+            .iter()
+            .zip(&old.caches)
+            .position(|(was, _)| (was.kind, was.params, was.average) == (study.kind, study.params, study.average));
+        let cache = match kept {
+            Some(at) => {
+                old.items.remove(at);
+                old.caches.remove(at)
+            }
+            None => Rc::new(RefCell::new(Cache::default())),
+        };
+        caches.push(cache.clone());
         let lines = StudyLayer {
             study: *study,
             cache: cache.clone(),
@@ -665,7 +681,7 @@ pub fn set_studies(chart: &mut Chart, items: Vec<Study>) {
             row += 1;
         }
     }
-    chart.resources_mut().insert(Studies { items, names });
+    chart.resources_mut().insert(Studies { items, names, caches });
     chart.resources_mut().insert(LabelHover::default());
     chart.add_handler(names::STUDY_LABELS, order::STUDY_LABELS_HANDLER, StudyLabels);
 }
@@ -865,6 +881,8 @@ struct State {
     count: usize,
     /// Of each session: the day it last opened (none yet: `i64::MIN`), its high and low since.
     sessions: [(i64, f64, f64); SESSION_PLACES.len()],
+    /// Of each session: the hour of UTC its zone's offset was last worked out for (none yet: `i64::MIN`), and it.
+    offsets: [(i64, i64); SESSION_PLACES.len()],
 }
 
 impl Default for State {
@@ -879,6 +897,7 @@ impl Default for State {
             sum: 0.0,
             count: 0,
             sessions: [(i64::MIN, 0.0, 0.0); SESSION_PLACES.len()],
+            offsets: [(i64::MIN, 0); SESSION_PLACES.len()],
         }
     }
 }
@@ -935,16 +954,6 @@ fn step(study: &Study, s: &mut State, v: &CandleView<'_>, i: usize, out: &mut [V
             s.a += typical * volume;
             s.b += volume;
             out[0][i] = if s.b > 0.0 { s.a / s.b } else { typical };
-        }
-        Kind::Bollinger => {
-            let n = study.whole(0);
-            if i + 1 >= n {
-                let window = &close[i + 1 - n..=i];
-                let m = mean(window);
-                let variance = window.iter().map(|x| (x - m) * (x - m)).sum::<f64>() / n as f64;
-                let d = study.params[1] * variance.sqrt();
-                (out[0][i], out[1][i], out[2][i]) = (m, m + d, m - d);
-            }
         }
         Kind::Rsi => {
             if i == 0 {
@@ -1004,14 +1013,6 @@ fn step(study: &Study, s: &mut State, v: &CandleView<'_>, i: usize, out: &mut [V
                 out[0][i] = s.b / (n * (n + 1) / 2) as f64;
             }
         }
-        Kind::Donchian => {
-            let n = study.whole(0);
-            if i + 1 >= n {
-                let highest = high[i + 1 - n..=i].iter().fold(f64::MIN, |a, &b| a.max(b));
-                let lowest = low[i + 1 - n..=i].iter().fold(f64::MAX, |a, &b| a.min(b));
-                (out[0][i], out[1][i], out[2][i]) = ((highest + lowest) / 2.0, highest, lowest);
-            }
-        }
         Kind::Obv => {
             if i > 0 {
                 let volume = v.volume()[i];
@@ -1022,67 +1023,6 @@ fn step(study: &Study, s: &mut State, v: &CandleView<'_>, i: usize, out: &mut [V
                 };
             }
             out[0][i] = s.a;
-        }
-        Kind::Cci => {
-            let n = study.whole(0);
-            if i + 1 >= n {
-                let typical: Vec<f64> = (i + 1 - n..=i).map(|j| (high[j] + low[j] + close[j]) / 3.0).collect();
-                let m = mean(&typical);
-                let deviation = typical.iter().map(|t| (t - m).abs()).sum::<f64>() / n as f64;
-                out[0][i] = if deviation > 0.0 {
-                    (typical[n - 1] - m) / (0.015 * deviation)
-                } else {
-                    0.0
-                };
-            }
-        }
-        Kind::Mfi => {
-            // Money in on bars whose typical price rose, out on those where it fell, over the last n changes.
-            let n = study.whole(0);
-            if i < n {
-                return;
-            }
-            let typical = |j: usize| (high[j] + low[j] + close[j]) / 3.0;
-            let (mut up, mut down) = (0.0, 0.0);
-            for j in i + 1 - n..=i {
-                let flow = typical(j) * v.volume()[j];
-                if typical(j) > typical(j - 1) {
-                    up += flow;
-                } else if typical(j) < typical(j - 1) {
-                    down += flow;
-                }
-            }
-            out[0][i] = match (up, down) {
-                (0.0, 0.0) => 50.0,
-                (_, 0.0) => 100.0,
-                (u, d) => 100.0 - 100.0 / (1.0 + u / d),
-            };
-        }
-        Kind::Ichimoku => {
-            // The middles of the highest high and the lowest low over three lengths; the leading spans are
-            // drawn `base - 1` bars ahead and the close as many behind (see `shift`), worked out here at the bar
-            // they are made from.
-            let middle = |n: usize| {
-                (i + 1 >= n).then(|| {
-                    let highest = high[i + 1 - n..=i].iter().fold(f64::MIN, |a, &b| a.max(b));
-                    let lowest = low[i + 1 - n..=i].iter().fold(f64::MAX, |a, &b| a.min(b));
-                    (highest + lowest) / 2.0
-                })
-            };
-            let (conversion, base) = (middle(study.whole(0)), middle(study.whole(1)));
-            if let Some(v) = conversion {
-                out[0][i] = v;
-            }
-            if let Some(v) = base {
-                out[1][i] = v;
-            }
-            if let (Some(a), Some(b)) = (conversion, base) {
-                out[2][i] = (a + b) / 2.0;
-            }
-            if let Some(v) = middle(study.whole(2)) {
-                out[3][i] = v;
-            }
-            out[4][i] = c;
         }
         Kind::Volume => {
             let (n, volume) = (study.whole(0), v.volume());
@@ -1191,55 +1131,42 @@ fn step(study: &Study, s: &mut State, v: &CandleView<'_>, i: usize, out: &mut [V
             let hour = |j: usize| (study.params[j] * HOUR as f64).round() as i64;
             if study.kind == Kind::Session {
                 let hours = (hour(1), hour(2));
-                if let Some(range) = session_at(&mut s.sessions[0], study.zone(), hours, t, (high[i], low[i])) {
+                let place = (&mut s.sessions[0], &mut s.offsets[0]);
+                if let Some(range) = session_at(place, study.zone(), hours, t, (high[i], low[i])) {
                     (out[0][i], out[1][i]) = range;
                 }
                 return;
             }
             for (k, &(_, zone, _)) in SESSION_PLACES.iter().enumerate() {
                 let hours = (hour(SESSION_HOURS + 2 * k), hour(SESSION_HOURS + 2 * k + 1));
-                if let Some(range) = session_at(&mut s.sessions[k], zone, hours, t, (high[i], low[i])) {
+                let place = (&mut s.sessions[k], &mut s.offsets[k]);
+                if let Some(range) = session_at(place, zone, hours, t, (high[i], low[i])) {
                     (out[2 * k][i], out[2 * k + 1][i]) = range;
                 }
             }
         }
-        Kind::Stochastic => {
-            let (k, smoothing, d) = (study.whole(0), study.whole(1), study.whole(2));
-            if i + 1 < k {
-                return;
-            }
-            let from = i + 1 - k;
-            let highest = high[from..=i].iter().fold(f64::MIN, |a, &b| a.max(b));
-            let lowest = low[from..=i].iter().fold(f64::MAX, |a, &b| a.min(b));
-            out[2][i] = if highest > lowest {
-                (c - lowest) / (highest - lowest) * 100.0
-            } else {
-                50.0
-            };
-            if i + 2 < k + smoothing {
-                return;
-            }
-            out[0][i] = mean(&out[2][i + 1 - smoothing..=i]);
-            if i + 3 < k + smoothing + d {
-                return;
-            }
-            out[1][i] = mean(&out[0][i + 1 - d..=i]);
-        }
+        // Over a window of bars: worked out for all the bars at once by `windows`.
+        Kind::Bollinger | Kind::Donchian | Kind::Cci | Kind::Mfi | Kind::Ichimoku | Kind::Stochastic => {}
     }
 }
 
 /// Whether a session open over `hours` (from its open to its close, in ms after midnight on `zone`'s clock) is
 /// open at `t`: then the high and low since it opened, with the bar's `range` in, kept in `slot` (the day it last
 /// opened, its high and low). One that closes before it opens runs over midnight: the hours after it belong to the
-/// session that opened the day before.
+/// session that opened the day before. `offset` keeps the zone's offset and the hour of UTC it is for: every
+/// clock here changes on a whole hour of UTC, so it is worked out once an hour, not once a bar.
 fn session_at(
-    slot: &mut (i64, f64, f64),
+    (slot, offset): (&mut (i64, f64, f64), &mut (i64, i64)),
     zone: Zone,
     (open, close): (i64, i64),
     t: i64,
     (high, low): (f64, f64),
 ) -> Option<(f64, f64)> {
-    let local = t + zone.offset(t);
+    let hour = t.div_euclid(HOUR);
+    if offset.0 != hour {
+        *offset = (hour, zone.offset(t));
+    }
+    let local = t + offset.1;
     let (mut day, at) = (local.div_euclid(DAY), local.rem_euclid(DAY));
     let open_now = if open <= close {
         (open..close).contains(&at)
@@ -1274,8 +1201,241 @@ fn average_step(study: &Study, s: &mut State, i: usize, out: &mut [Vec<f64>]) {
     }
 }
 
+/// Bars worked out side by side by [`window_sums`].
+const LANES: usize = 8;
+
+/// For the `L` bars from `first` on, the sums of `term(value, lane)` over the `n` values of each one's window (that
+/// of bar `first + lane` is `first + lane + 1 - n..=first + lane`; `values[k]` is that of bar `k + from`), each
+/// added oldest first from `zero` as a loop over its window does: the same to the bit, but the adds of different
+/// bars do not wait for each other.
+fn window_sums<const L: usize>(
+    values: &[f64],
+    from: usize,
+    first: usize,
+    n: usize,
+    zero: f64,
+    term: impl Fn(f64, usize) -> f64,
+) -> [f64; L] {
+    let mut sums = [zero; L];
+    // Row `b` holds the `b`th value of each window.
+    for row in values[first + 1 - n - from..first + L - from].windows(L) {
+        let row: &[f64; L] = row.try_into().expect("a window of L values");
+        for (lane, sum) in sums.iter_mut().enumerate() {
+            *sum += term(row[lane], lane);
+        }
+    }
+    sums
+}
+
+/// Calls `wide(out, i)` for each run of [`LANES`] bars of `bars` from its start, and `one(out, i)` for each bar left.
+fn in_lanes<T: ?Sized>(bars: Range<usize>, out: &mut T, wide: impl Fn(&mut T, usize), one: impl Fn(&mut T, usize)) {
+    let mut i = bars.start;
+    while i + LANES <= bars.end {
+        wide(out, i);
+        i += LANES;
+    }
+    for i in i..bars.end {
+        one(out, i);
+    }
+}
+
+/// Bollinger's bands at the `L` bars from `i` on: the mean of the window and `width` deviations around it.
+fn bollinger<const L: usize>(close: &[f64], n: usize, width: f64, i: usize, out: &mut [Vec<f64>]) {
+    let means = window_sums::<L>(close, 0, i, n, -0.0, |x, _| x).map(|sum| sum / n as f64);
+    let squares = window_sums::<L>(close, 0, i, n, -0.0, |x, lane| (x - means[lane]) * (x - means[lane]));
+    for (lane, (m, square)) in means.into_iter().zip(squares).enumerate() {
+        let d = width * (square / n as f64).sqrt();
+        (out[0][i + lane], out[1][i + lane], out[2][i + lane]) = (m, m + d, m - d);
+    }
+}
+
+/// The CCI at the `L` bars from `i` on, from the typical prices (`typical[k]` is that of bar `k + from`).
+fn cci<const L: usize>(typical: &[f64], from: usize, n: usize, i: usize, out: &mut [f64]) {
+    let means = window_sums::<L>(typical, from, i, n, -0.0, |t, _| t).map(|sum| sum / n as f64);
+    let deviations =
+        window_sums::<L>(typical, from, i, n, -0.0, |t, lane| (t - means[lane]).abs()).map(|sum| sum / n as f64);
+    for (lane, (m, deviation)) in means.into_iter().zip(deviations).enumerate() {
+        out[i + lane] = if deviation > 0.0 {
+            (typical[i + lane - from] - m) / (0.015 * deviation)
+        } else {
+            0.0
+        };
+    }
+}
+
+/// The MFI at the `L` bars from `i` on, from the money that came in and went out on each bar (`up[k]` and `down[k]`
+/// are those of bar `k + from`, zero on the side it did not go).
+fn mfi<const L: usize>((up, down): (&[f64], &[f64]), from: usize, n: usize, i: usize, out: &mut [f64]) {
+    let ups = window_sums::<L>(up, from, i, n, 0.0, |flow, _| flow);
+    let downs = window_sums::<L>(down, from, i, n, 0.0, |flow, _| flow);
+    for (lane, flows) in ups.into_iter().zip(downs).enumerate() {
+        out[i + lane] = match flows {
+            (0.0, 0.0) => 50.0,
+            (_, 0.0) => 100.0,
+            (u, d) => 100.0 - 100.0 / (1.0 + u / d),
+        };
+    }
+}
+
+/// The highest of each window of `n` of `values` ending at the bars of `ends` (all with a whole window), as
+/// `fold(f64::MIN, f64::max)` over it gives it (NaN left out), into `into`, one per bar of `ends`; the lowest with
+/// `f64::min` and `f64::MAX`. Each window is the end of one block of `n` bars and the start of the next, so it is
+/// the higher of the highs from its first bar to the end of that block and from the start of the next to its
+/// last: two passes, whatever `n`.
+fn extremes(values: &[f64], n: usize, ends: Range<usize>, pick: impl Fn(f64, f64) -> f64, none: f64, into: &mut [f64]) {
+    if ends.is_empty() {
+        return;
+    }
+    let values = &values[ends.start + 1 - n..ends.end];
+    // From each bar to the end of its block.
+    let mut behind = values.to_vec();
+    for block in behind.chunks_mut(n) {
+        for k in (1..block.len()).rev() {
+            block[k - 1] = pick(block[k - 1], block[k]);
+        }
+    }
+    // From the start of each block to each bar, as it goes.
+    for (b, block) in values.chunks(n).enumerate() {
+        let mut ahead = block[0];
+        for (k, &v) in (b * n..).zip(block) {
+            ahead = pick(ahead, v);
+            if let Some(first) = (k + 1).checked_sub(n) {
+                into[first] = pick(none, pick(behind[first], ahead));
+            }
+        }
+    }
+}
+
+/// Works out `bars` of the studies over a window of bars. They need nothing carried from bar to bar, so they are
+/// worked out here for all the bars at once: the sums of several windows side by side, the highs and lows of each
+/// from those of blocks rather than from the whole window again.
+fn windows(study: &Study, v: &CandleView<'_>, bars: Range<usize>, out: &mut [Vec<f64>]) {
+    let (close, high, low) = (v.close(), v.high(), v.low());
+    let typical = |j: usize| (high[j] + low[j] + close[j]) / 3.0;
+    match study.kind {
+        Kind::Bollinger => {
+            let (n, width) = (study.whole(0), study.params[1]);
+            in_lanes(
+                bars.start.max(n - 1)..bars.end,
+                out,
+                |out, i| bollinger::<LANES>(close, n, width, i, out),
+                |out, i| bollinger::<1>(close, n, width, i, out),
+            );
+        }
+        Kind::Cci => {
+            let n = study.whole(0);
+            let start = bars.start.max(n - 1);
+            if start >= bars.end {
+                return;
+            }
+            let from = start + 1 - n;
+            let typical: Vec<f64> = (from..bars.end).map(typical).collect();
+            in_lanes(
+                start..bars.end,
+                &mut out[0][..],
+                |out, i| cci::<LANES>(&typical, from, n, i, out),
+                |out, i| cci::<1>(&typical, from, n, i, out),
+            );
+        }
+        Kind::Mfi => {
+            // Money in on bars whose typical price rose, out on those where it fell, over the last n changes.
+            let n = study.whole(0);
+            let start = bars.start.max(n);
+            if start >= bars.end {
+                return;
+            }
+            let from = start + 1 - n;
+            let volume = v.volume();
+            let mut before = typical(from - 1);
+            let (mut up, mut down) = (Vec::with_capacity(bars.end - from), Vec::with_capacity(bars.end - from));
+            for (j, &volume) in (from..).zip(&volume[from..bars.end]) {
+                let (now, flow) = (typical(j), typical(j) * volume);
+                let (u, d) = if now > before {
+                    (flow, 0.0)
+                } else if now < before {
+                    (0.0, flow)
+                } else {
+                    (0.0, 0.0)
+                };
+                up.push(u);
+                down.push(d);
+                before = now;
+            }
+            in_lanes(
+                start..bars.end,
+                &mut out[0][..],
+                |out, i| mfi::<LANES>((&up, &down), from, n, i, out),
+                |out, i| mfi::<1>((&up, &down), from, n, i, out),
+            );
+        }
+        Kind::Donchian => {
+            let n = study.whole(0);
+            let ends = bars.start.max(n - 1).min(bars.end)..bars.end;
+            let [middle, highest, lowest, ..] = out else {
+                return;
+            };
+            extremes(high, n, ends.clone(), f64::max, f64::MIN, &mut highest[ends.clone()]);
+            extremes(low, n, ends.clone(), f64::min, f64::MAX, &mut lowest[ends.clone()]);
+            for i in ends {
+                middle[i] = (highest[i] + lowest[i]) / 2.0;
+            }
+        }
+        Kind::Ichimoku => {
+            // The middles of the highest high and the lowest low over three lengths; the leading spans are
+            // drawn `base - 1` bars ahead and the close as many behind (see `shift`), worked out here at the bar
+            // they are made from.
+            let [conversion, base, lead, span, lagging, ..] = out else {
+                return;
+            };
+            let mut lows = Vec::new();
+            let mut middles = |n: usize, line: &mut [f64]| {
+                let ends = bars.start.max(n - 1).min(bars.end)..bars.end;
+                lows.resize(ends.len(), 0.0);
+                extremes(high, n, ends.clone(), f64::max, f64::MIN, &mut line[ends.clone()]);
+                extremes(low, n, ends.clone(), f64::min, f64::MAX, &mut lows);
+                for (i, l) in ends.clone().zip(&lows) {
+                    line[i] = (line[i] + l) / 2.0;
+                }
+                ends.start
+            };
+            let from = middles(study.whole(0), conversion).max(middles(study.whole(1), base));
+            middles(study.whole(2), span);
+            for i in from.min(bars.end)..bars.end {
+                lead[i] = (conversion[i] + base[i]) / 2.0;
+            }
+            lagging[bars.clone()].copy_from_slice(&close[bars]);
+        }
+        Kind::Stochastic => {
+            let (k, smoothing, d) = (study.whole(0), study.whole(1), study.whole(2));
+            let ends = bars.start.max(k - 1).min(bars.end)..bars.end;
+            let [slow, signal, fast, ..] = out else {
+                return;
+            };
+            let mut lowest = vec![0.0; ends.len()];
+            extremes(high, k, ends.clone(), f64::max, f64::MIN, &mut fast[ends.clone()]);
+            extremes(low, k, ends.clone(), f64::min, f64::MAX, &mut lowest);
+            for (i, l) in ends.zip(lowest) {
+                let h = fast[i];
+                fast[i] = if h > l { (close[i] - l) / (h - l) * 100.0 } else { 50.0 };
+                if i + 2 < k + smoothing {
+                    continue;
+                }
+                slow[i] = mean(&fast[i + 1 - smoothing..=i]);
+                if i + 3 < k + smoothing + d {
+                    continue;
+                }
+                signal[i] = mean(&slow[i + 1 - d..=i]);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// How many bars each low and high kept for [`Cache::extent`] spans.
+const BLOCK: usize = 64;
+
 /// What a study worked out, kept between frames.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub(crate) struct Cache {
     /// One series per column, as long as the bars, NaN where there is no value.
     pub(crate) out: Vec<Vec<f64>>,
@@ -1284,25 +1444,58 @@ pub(crate) struct Cache {
     /// The times of the first two bars and the last one worked out: the bars are the same ones while these are.
     key: [Option<Time>; 3],
     len: usize,
+    /// Of each column, the lowest and highest finite value of each whole [`BLOCK`] of bars, the first `blocked`
+    /// of them still those of the values: the price scale reads these rather than every bar shown.
+    blocks: Vec<Vec<(f64, f64)>>,
+    blocked: usize,
+    /// What was worked out for the other bars shown last, kept so that going back to them (another timeframe and
+    /// back) needs only the bars that came since.
+    other: Option<Box<Cache>>,
+}
+
+/// The values are many: only how many.
+impl core::fmt::Debug for Cache {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Cache")
+            .field("columns", &self.out.len())
+            .field("len", &self.len)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Cache {
+    /// Whether the first `self.len` bars of `t` are those it worked out (but the last, which may have changed).
+    fn holds(&self, t: &[Time]) -> bool {
+        self.len > 0
+            && t.len() >= self.len
+            && self.key == [t.first().copied(), t.get(1).copied(), t.get(self.len - 1).copied()]
+    }
+
     /// Works out the bars of `view` it has not yet: only the last one again while the bars are the same ones.
     pub(crate) fn update(&mut self, study: &Study, view: CandleView<'_>) {
         let (n, t) = (view.len(), view.time());
-        let same = self.len > 0
-            && n >= self.len
-            && self.key == [t.first().copied(), t.get(1).copied(), t.get(self.len - 1).copied()];
+        if !self.holds(t) {
+            let mut other = self.other.take();
+            let these = std::mem::take(self);
+            if let Some(other) = other.take_if(|o| o.holds(t)) {
+                *self = *other;
+            }
+            // What it had, or else what it kept from before.
+            self.other = if these.len > 0 { Some(Box::new(these)) } else { other };
+        }
+        let same = self.holds(t);
         let start = if same { self.len - 1 } else { 0 };
         if !same {
             self.before_last = State::default();
             self.out = vec![Vec::new(); study.columns()];
         }
+        self.blocked = self.blocked.min(start / BLOCK);
         let mut state = self.before_last;
         for column in &mut self.out {
             column.truncate(start);
             column.resize(n, f64::NAN);
         }
+        windows(study, &view, start..n, &mut self.out);
         for i in start..n {
             if i + 1 == n {
                 self.before_last = state;
@@ -1314,6 +1507,51 @@ impl Cache {
         }
         self.len = n;
         self.key = [t.first().copied(), t.get(1).copied(), t.last().copied()];
+    }
+
+    /// The lowest and highest finite values of `column` at the bars of `range`, `None` if it has none there: from
+    /// the lows and highs of the whole blocks in it and the values at its ends.
+    fn extent(&mut self, column: usize, range: Range<usize>) -> Option<(f64, f64)> {
+        let span = |values: &[f64]| {
+            values
+                .iter()
+                .filter(|v| v.is_finite())
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &v| {
+                    (lo.min(v), hi.max(v))
+                })
+        };
+        let whole = self.len / BLOCK;
+        if self.blocked < whole {
+            self.blocks.resize(self.out.len(), Vec::new());
+            for (values, blocks) in self.out.iter().zip(&mut self.blocks) {
+                blocks.truncate(self.blocked);
+                blocks.extend(
+                    values[self.blocked * BLOCK..whole * BLOCK]
+                        .as_chunks::<BLOCK>()
+                        .0
+                        .iter()
+                        .map(|block| span(block)),
+                );
+            }
+            self.blocked = whole;
+        }
+        let values = &self.out[column];
+        let range = range.start.min(values.len())..range.end.min(values.len());
+        let (first, last) = (range.start.div_ceil(BLOCK), range.end / BLOCK);
+        let (lo, hi) = if first < last {
+            [
+                span(&values[range.start..first * BLOCK]),
+                span(&values[last * BLOCK..range.end]),
+            ]
+            .into_iter()
+            .chain(self.blocks[column][first..last].iter().copied())
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), (l, h)| {
+                (lo.min(l), hi.max(h))
+            })
+        } else {
+            span(&values[range])
+        };
+        (lo <= hi).then_some((lo, hi))
     }
 }
 
@@ -1624,10 +1862,8 @@ impl Layer for StudyLayer {
             let len = cache.out[column].len() as isize;
             let from = (visible.start as isize - shift).clamp(0, len) as usize;
             let to = (visible.end as isize - shift).clamp(0, len) as usize;
-            for &v in &cache.out[column][from..to.max(from)] {
-                if v.is_finite() {
-                    extent = Some(extent.map_or((v, v), |(lo, hi): (f64, f64)| (lo.min(v), hi.max(v))));
-                }
+            if let Some((l, h)) = cache.extent(column, from..to.max(from)) {
+                extent = Some(extent.map_or((l, h), |(lo, hi): (f64, f64)| (lo.min(l), hi.max(h))));
             }
         }
         extent
@@ -2259,6 +2495,73 @@ mod tests {
             assert_eq!(cache.out[0].len(), 50);
             for (a, b) in cache.out.iter().zip(&compute(&study, shorter.view())) {
                 assert_eq!(defined(a), defined(b), "{kind:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn going_back_to_the_bars_shown_before_works_out_only_the_new_ones() {
+        let prices: Vec<f64> = (0..300).map(|i| 100.0 + (i as f64 * 0.37).sin() * 5.0).collect();
+        let study = Study::new(Kind::Bollinger);
+        let mut cache = Cache::default();
+        let mut data = closes(&prices[..200]);
+        cache.update(&study, data.view());
+        // Other bars (another timeframe), then the first ones again with a bar more.
+        let other = hourly("2026-01-05", &prices[..80]);
+        cache.update(&study, other.view());
+        assert_eq!(defined(&cache.out[0]), defined(&compute(&study, other.view())[0]));
+        data.push(Candle {
+            time: Time(200 * 60_000),
+            ..closes(&[prices[200]]).view().get(0).unwrap()
+        })
+        .unwrap();
+        cache.update(&study, data.view());
+        assert_eq!(defined(&cache.out[1]), defined(&compute(&study, data.view())[1]));
+        // The other bars are what it keeps now.
+        assert_eq!(cache.other.as_ref().map(|o| o.len), Some(80));
+    }
+
+    #[test]
+    fn the_extent_of_a_column_is_that_of_its_finite_values_shown() {
+        let prices: Vec<f64> = (0..1000)
+            .map(|i| 100.0 + (i as f64 * 0.37).sin() * (i as f64))
+            .collect();
+        let study = Study::new(Kind::Bollinger);
+        let mut cache = Cache::default();
+        let data = closes(&prices);
+        cache.update(&study, data.view());
+        for range in [
+            0..1000,
+            5..6,
+            19..20,
+            63..129,
+            64..128,
+            100..1000,
+            999..1000,
+            0..0,
+            500..2000,
+        ] {
+            for column in 0..3 {
+                let values = &cache.out[column];
+                let shown = &values[range.start.min(1000)..range.end.min(1000)];
+                let finite: Vec<f64> = shown.iter().copied().filter(|v| v.is_finite()).collect();
+                let wanted = (!finite.is_empty()).then(|| {
+                    let lo = finite.iter().copied().fold(f64::INFINITY, f64::min);
+                    (lo, finite.iter().copied().fold(f64::NEG_INFINITY, f64::max))
+                });
+                assert_eq!(cache.extent(column, range.clone()), wanted, "{range:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_zone_s_offset_stays_the_same_through_each_hour_of_utc() {
+        // Sessions work the offset out once an hour.
+        let from = calendar::days_from_civil(2020, 1, 1) * DAY;
+        for zone in Zone::ALL {
+            for hour in 0..(10 * 366 * 24) {
+                let t = from + hour * HOUR;
+                assert_eq!(zone.offset(t), zone.offset(t + HOUR - 1), "{zone:?} {t}");
             }
         }
     }
