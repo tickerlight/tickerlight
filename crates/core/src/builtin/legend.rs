@@ -28,12 +28,13 @@ impl Plugin for Legend {
 
 pub struct LegendLayer;
 
-/// Decimals that show about five significant digits of `price`, two at least.
+/// Decimals that show about five significant digits of `price`, two at least; twelve at most, enough for the
+/// MACD of a coin at a thousandth of a cent.
 pub(crate) fn decimals(price: f64) -> usize {
     if !(price.is_finite() && price > 0.0) {
         return 2;
     }
-    (4 - price.log10().floor() as i32).clamp(2, 8) as usize
+    (4 - price.log10().floor() as i32).clamp(2, 12) as usize
 }
 
 impl Layer for LegendLayer {
@@ -147,6 +148,7 @@ mod tests {
         assert_eq!(decimals(104.35), 2);
         assert_eq!(decimals(1.2345), 4);
         assert_eq!(decimals(0.000_123_4), 8);
+        assert_eq!(decimals(0.000_000_012_34), 12);
         assert_eq!(decimals(0.0), 2);
     }
 }
