@@ -997,10 +997,13 @@ impl Layer for TradingLayer {
             }
         }
         for order in account.orders() {
-            let color = if order.qty > 0.0 {
-                style.candle.up
-            } else {
-                style.candle.down
+            // An exit is coloured by what it does whatever the side, a take profit up and a stop loss down; an
+            // entry by its side.
+            let color = match (order.reduce_only, order.kind) {
+                (true, OrderKind::Limit) => style.candle.up,
+                (true, OrderKind::Stop) => style.candle.down,
+                _ if order.qty > 0.0 => style.candle.up,
+                _ => style.candle.down,
             };
             // Where the stop moves to the entry: dotted, fainter than an order, taken and dragged like one.
             if let Some(trigger) = order.break_even {
